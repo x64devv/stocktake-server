@@ -1,0 +1,107 @@
+# Development stack — HTTP only, no TLS certs required
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+services:
+  stocktake-db:
+    image: postgres:15-alpine
+    container_name: stocktake-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stocktake
+      POSTGRES_USER: stocktake
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stocktake"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stocktake-cache:
+    image: redis:7-alpine
+    container_name: stocktake-cache
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - cache_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stocktake-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stocktake-api
+    restart: unless-stopped
+    depends_on:
+      stocktake-db:
+        condition: service_healthy
+      stocktake-cache:
+        condition: service_healthy
+    environment:
+      SERVER_ADDR: ":8080"
+      DATABASE_URL: "postgres://stocktake:${DB_PASSWORD}@stocktake-db:5432/stocktake?sslmode=disable"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@stocktake-cache:6379"
+      JWT_SECRET: ${JWT_SECRET}
+      OTP_SECRET: ${OTP_SECRET}
+      SMS_BASE_URL: ${SMS_BASE_URL:-https://sms.localhost.co.zw/api}
+      SMS_API_KEY: ${SMS_API_KEY:-placeholder}
+      LS_BASE_URL: ${LS_BASE_URL:-http://placeholder}
+      LS_USERNAME: ${LS_USERNAME:-placeholder}
+      LS_PASSWORD: ${LS_PASSWORD:-placeholder}
+      LS_COMPANY_ID: ${LS_COMPANY_ID:-placeholder}
+      OTP_EXPIRY_MINUTES: ${OTP_EXPIRY_MINUTES:-10}
+      OTP_MAX_REQUESTS: ${OTP_MAX_REQUESTS:-3}
+      COUNTER_TOKEN_HOURS: ${COUNTER_TOKEN_HOURS:-12}
+      ADMIN_TOKEN_HOURS: ${ADMIN_TOKEN_HOURS:-8}
+      VARIANCE_TOLERANCE_PCT: ${VARIANCE_TOLERANCE_PCT:-2.0}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  stocktake-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: stocktake-web
+    restart: unless-stopped
+    depends_on:
+      stocktake-api:
+        condition: service_healthy
+    networks:
+      - internal
+
+  stocktake-proxy:
+    image: nginx:alpine
+    container_name: stocktake-proxy
+    restart: unless-stopped
+    depends_on:
+      - stocktake-api
+      - stocktake-web
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - internal
+
+volumes:
+  db_data:
+  cache_data:
+
+networks:
+  internal:
+    driver: bridge
