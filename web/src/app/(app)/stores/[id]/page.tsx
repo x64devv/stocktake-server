@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { stores } from '@/lib/api'
 import type { Store, StoreLayout, Zone, Aisle, Bay } from '@/types'
 import { Button, Card, CardBody, CardHeader, Spinner, Empty } from '@/components/ui'
@@ -68,12 +69,26 @@ export default function StoreLayoutPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
+          <p className="text-xs text-gray-400 mb-1">
+            <Link href="/stores" className="hover:text-teal-600">Stores</Link>
+            {' / '}
+            <span className="text-gray-600">{store?.store_name}</span>
+          </p>
           <h1 className="text-xl font-semibold text-gray-900">{store?.store_name}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{store?.store_code} — LS: {store?.ls_store_code}</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {store?.store_code}
+            {store?.ls_store_code && <span className="ml-2 text-gray-400">· LS: {store.ls_store_code}</span>}
+            {store && !store.active && <span className="ml-2 text-red-500 font-medium">· Inactive</span>}
+          </p>
         </div>
-        <a href={stores.labelsUrl(id)} target="_blank" rel="noreferrer">
-          <Button variant="secondary" size="sm">Download all labels</Button>
-        </a>
+        <div className="flex items-center gap-2">
+          <a href={stores.labelsUrl(id)} target="_blank" rel="noreferrer">
+            <Button variant="secondary" size="sm">Download all labels</Button>
+          </a>
+          <Link href={`/stores/${id}/edit`}>
+            <Button variant="secondary" size="sm">Edit store</Button>
+          </Link>
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg">{error}</p>}
@@ -148,13 +163,38 @@ export default function StoreLayoutPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700">Bins ({layout.bays?.length ?? 0})</h2>
-            <Button size="sm" variant="secondary" onClick={() => window.open(`/stores/${id}/layout/import`, '_self')}>
+            <a
+              href={`/api/v1/stores/${id}/layout/import`}
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+              onClick={e => { e.preventDefault(); document.getElementById('csv-import')?.click() }}
+            >
               Import from CSV
-            </Button>
+            </a>
+            <input id="csv-import" type="file" accept=".csv" className="hidden" onChange={async e => {
+              const file = e.target.files?.[0]
+              if (!file) return
+              const fd = new FormData()
+              fd.append('file', file)
+              const token = localStorage.getItem('st_token')
+              try {
+                const res = await fetch(`/api/v1/stores/${id}/layout/import`, {
+                  method: 'POST',
+                  headers: token ? { Authorization: `Bearer ${token}` } : {},
+                  body: fd,
+                })
+                if (!res.ok) throw new Error((await res.json()).error)
+                const data = await res.json()
+                alert(`Imported ${data.imported} rows. Reload to see updated layout.`)
+                const [, l] = await Promise.all([stores.get(id), stores.getLayout(id)])
+                setLayout(l)
+              } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : 'Import failed')
+              }
+              e.target.value = ''
+            }} />
           </div>
         </CardHeader>
         <CardBody className="space-y-4">
-          {/* Add bin form */}
           <form onSubmit={addBin} className="flex gap-2 pb-4 border-b border-gray-100">
             <select value={newBin.aisle_id} onChange={e => setNewBin(b => ({ ...b, aisle_id: e.target.value }))}
               className="w-32 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" required>

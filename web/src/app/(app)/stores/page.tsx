@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { stores } from '@/lib/api'
 import type { Store } from '@/types'
-import { Button, Card, CardBody, CardHeader, Badge, Spinner, Empty } from '@/components/ui'
+import { Button, Card, CardBody, Badge, Spinner, Empty } from '@/components/ui'
 
 export default function StoresPage() {
   const [list, setList] = useState<Store[]>([])
@@ -45,15 +45,20 @@ export default function StoresPage() {
                 {list.map(store => (
                   <tr key={store.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-900">{store.store_name}</td>
-                    <td className="px-4 py-3 text-gray-600">{store.store_code}</td>
-                    <td className="px-4 py-3 text-gray-600">{store.ls_store_code}</td>
+                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{store.store_code}</td>
+                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{store.ls_store_code}</td>
                     <td className="px-4 py-3">
                       <Badge color={store.active ? 'green' : 'gray'}>{store.active ? 'Active' : 'Inactive'}</Badge>
                     </td>
-                    <td className="px-4 py-3 space-x-3">
-                      <Link href={`/stores/${store.id}`} className="text-teal-600 hover:text-teal-700 font-medium text-xs">Layout</Link>
-                      {/* <Link href={`/stores/${store.id}/edit`} className="text-gray-500 hover:text-gray-700 font-medium text-xs">Edit</Link> */}
-                      <Link href={`/stores/${store.id}`} className="text-gray-500 hover:text-gray-700 font-medium text-xs">Edit</Link>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-3 justify-end">
+                        <Link href={`/stores/${store.id}`} className="text-teal-600 hover:text-teal-700 font-medium text-xs">
+                          Layout
+                        </Link>
+                        <Link href={`/stores/${store.id}/edit`} className="text-gray-500 hover:text-gray-700 font-medium text-xs">
+                          Edit
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

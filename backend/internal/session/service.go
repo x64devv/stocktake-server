@@ -6,6 +6,7 @@ import (
 
 	"github.com/totalretail/stocktake/internal/auth"
 	"github.com/totalretail/stocktake/internal/ls"
+	"github.com/totalretail/stocktake/internal/ws"
 	"gorm.io/gorm"
 )
 
@@ -26,10 +27,11 @@ type Service interface {
 type service struct {
 	db       *gorm.DB
 	lsClient *ls.Client
+	hub      *ws.Hub
 }
 
-func NewService(db *gorm.DB, lsClient *ls.Client) Service {
-	return &service{db: db, lsClient: lsClient}
+func NewService(db *gorm.DB, lsClient *ls.Client, hub *ws.Hub) Service {
+	return &service{db: db, lsClient: lsClient, hub: hub}
 }
 
 func (s *service) ListSessions(ctx context.Context, storeID string) ([]Session, error) {
@@ -47,6 +49,7 @@ func (s *service) GetSession(ctx context.Context, id string) (*Session, error) {
 }
 
 func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, error) {
+	// Enforce one active session per store (§4.2)
 	var count int64
 	s.db.WithContext(ctx).Model(&Session{}).
 		Where("store_id = ? AND status IN ?", sess.StoreID,
@@ -56,11 +59,25 @@ func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, er
 		return nil, fmt.Errorf("store already has an active stock take session")
 	}
 	sess.Status = StatusDraft
+	if sess.VarianceTolerancePct == 0 {
+		sess.VarianceTolerancePct = 2.0
+	}
 	return &sess, s.db.WithContext(ctx).Create(&sess).Error
 }
 
+// UpdateStatus persists the new status and broadcasts session.status_changed over WebSocket (§7.6).
 func (s *service) UpdateStatus(ctx context.Context, id string, status SessionStatus) error {
-	return s.db.WithContext(ctx).Model(&Session{}).Where("id = ?", id).Update("status", status).Error
+	if err := s.db.WithContext(ctx).Model(&Session{}).
+		Where("id = ?", id).
+		Update("status", status).Error; err != nil {
+		return err
+	}
+	s.hub.Broadcast(id, ws.Event{
+		Type:      ws.EventSessionUpdated,
+		SessionID: id,
+		Payload:   map[string]string{"status": string(status)},
+	})
+	return nil
 }
 
 func (s *service) UpsertCounter(ctx context.Context, name, mobile string) (*auth.Counter, error) {
@@ -76,6 +93,7 @@ func (s *service) AddCounter(ctx context.Context, sessionID, counterID string) e
 	sc := SessionCounter{SessionID: sessionID, CounterID: counterID, Active: true}
 	return s.db.WithContext(ctx).
 		Where(SessionCounter{SessionID: sessionID, CounterID: counterID}).
+		Assign(SessionCounter{Active: true}).
 		FirstOrCreate(&sc).Error
 }
 
@@ -110,8 +128,8 @@ func (s *service) PullTheoretical(ctx context.Context, sessionID string) error {
 	var store struct{ LSStoreCode string }
 	if err := s.db.WithContext(ctx).Raw(
 		`SELECT stores.ls_store_code FROM stores
-		 JOIN sessions ON sessions.store_id = stores.id
-		 WHERE sessions.id = ?`, sessionID,
+		 JOIN stock_take_sessions ON stock_take_sessions.store_id = stores.id
+		 WHERE stock_take_sessions.id = ?`, sessionID,
 	).Scan(&store).Error; err != nil {
 		return fmt.Errorf("get store LS code: %w", err)
 	}
@@ -156,7 +174,8 @@ func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
 	var store struct{ LSStoreCode string }
 	s.db.WithContext(ctx).Raw(
 		`SELECT stores.ls_store_code FROM stores
-		 JOIN sessions ON sessions.store_id = stores.id WHERE sessions.id = ?`, sessionID,
+		 JOIN stock_take_sessions ON stock_take_sessions.store_id = stores.id
+		 WHERE stock_take_sessions.id = ?`, sessionID,
 	).Scan(&store)
 
 	var wsLines []ls.WorksheetLine

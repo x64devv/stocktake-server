@@ -23,27 +23,30 @@ type Server struct {
 	cfg    *config.Config
 	router *gin.Engine
 }
+
 func New(cfg *config.Config, db *gorm.DB) *Server {
-	// Parse full Redis URL (redis://:password@host:port)
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		panic("invalid REDIS_URL: " + err.Error())
 	}
 	rdb := redis.NewClient(opt)
 
+	// Hub created first so it can be injected into session service
+	hub := ws.NewHub()
+
 	// Services
 	authSvc     := auth.NewService(db, rdb, cfg.JWTSecret, cfg.OTPExpiryMinutes, cfg.OTPMaxRequests)
 	smsSvc      := sms.NewClient(cfg.SMSBaseURL, cfg.SMSAPIKey)
 	lsClient    := ls.NewClient(cfg.LSBaseURL, cfg.LSCompanyID, cfg.LSUsername, cfg.LSPassword)
 	storeSvc    := store.NewService(db)
-	sessionSvc  := session.NewService(db, lsClient)
+	sessionSvc  := session.NewService(db, lsClient, hub) // hub injected — broadcasts session.status_changed
 	countingSvc := counting.NewService(db)
 	varianceSvc := variance.NewService(db)
 	reportSvc   := reporting.NewService(db)
-	hub         := ws.NewHub()
 
 	// Handlers
 	authHandler      := auth.NewHandler(authSvc, smsSvc, db, cfg.CounterTokenHours, cfg.AdminTokenHours)
+	adminUserHandler := auth.NewAdminUserHandler(db)
 	storeHandler     := store.NewHandler(storeSvc)
 	sessionHandler   := session.NewHandler(sessionSvc, authSvc, smsSvc, cfg.CounterTokenHours)
 	countingHandler  := counting.NewHandler(countingSvc, hub)
@@ -53,14 +56,13 @@ func New(cfg *config.Config, db *gorm.DB) *Server {
 	router := gin.Default()
 	router.Use(corsMiddleware())
 
-	// Health check — used by Docker healthcheck
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
 	api := router.Group("/api/v1")
 
-	// Public routes (no auth)
+	// Public routes
 	authHandler.RegisterRoutes(api)
 
 	// Admin-authenticated routes
@@ -69,6 +71,7 @@ func New(cfg *config.Config, db *gorm.DB) *Server {
 	sessionHandler.RegisterRoutes(adminRoutes)
 	varianceHandler.RegisterRoutes(adminRoutes)
 	reportingHandler.RegisterRoutes(adminRoutes)
+	adminUserHandler.RegisterAdminUserRoutes(adminRoutes)
 
 	// Counter-authenticated routes
 	counterRoutes := api.Group("", middleware.RequireAuth(authSvc, auth.TokenCounter))

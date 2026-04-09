@@ -14,6 +14,7 @@ export default function NewSessionPage() {
     store_id: '',
     session_date: new Date().toISOString().slice(0, 10),
     type: 'FULL' as 'FULL' | 'PARTIAL',
+    variance_tolerance_pct: 2.0,
   })
   const [error, setError] = useState('')
 
@@ -37,18 +38,18 @@ export default function NewSessionPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-gray-900">New Stock Take</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Set up a new stock take session</p>
+    <div className="p-6 max-w-lg space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900">New stock take</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Create a session to begin counting</p>
       </div>
 
       <Card>
         <CardHeader><h2 className="text-sm font-semibold text-gray-700">Session details</h2></CardHeader>
         <CardBody>
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Store</label>
               <select
                 value={form.store_id}
                 onChange={e => setForm(f => ({ ...f, store_id: e.target.value }))}
@@ -56,14 +57,14 @@ export default function NewSessionPage() {
                 required
               >
                 <option value="">Select a store…</option>
-                {storeList.map(s => (
+                {storeList.filter(s => s.active).map(s => (
                   <option key={s.id} value={s.id}>{s.store_name}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Count date</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Count date</label>
               <input
                 type="date"
                 value={form.session_date}
@@ -74,19 +75,20 @@ export default function NewSessionPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Count type</label>
-              <div className="flex gap-4">
-                {(['FULL', 'PARTIAL'] as const).map(type => (
-                  <label key={type} className="flex items-center gap-2 cursor-pointer">
+              <label className="block text-xs font-medium text-gray-600 mb-2">Count type</label>
+              <div className="flex gap-3">
+                {(['FULL', 'PARTIAL'] as const).map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="radio"
-                      value={type}
-                      checked={form.type === type}
-                      onChange={() => setForm(f => ({ ...f, type }))}
+                      name="type"
+                      value={t}
+                      checked={form.type === t}
+                      onChange={() => setForm(f => ({ ...f, type: t }))}
                       className="text-teal-600 focus:ring-teal-500"
                     />
                     <span className="text-sm text-gray-700">
-                      {type === 'FULL' ? 'Full store count' : 'Partial (select items)'}
+                      {t === 'FULL' ? 'Full store count' : 'Partial (select items)'}
                     </span>
                   </label>
                 ))}
@@ -94,6 +96,24 @@ export default function NewSessionPage() {
               {form.type === 'PARTIAL' && (
                 <p className="mt-2 text-xs text-gray-400">Item selection will be available after creation.</p>
               )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Variance tolerance (%)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={form.variance_tolerance_pct}
+                onChange={e => setForm(f => ({ ...f, variance_tolerance_pct: parseFloat(e.target.value) || 2.0 }))}
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Items with variance beyond this % will appear in the variance report. Default is 2%.
+              </p>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
