@@ -3,13 +3,14 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
-import { LayoutDashboard, Store, ClipboardList, LogOut } from 'lucide-react'
+import { LayoutDashboard, Store, ClipboardList, Users, LogOut } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 
 const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/stores', label: 'Stores', icon: Store },
-  { href: '/sessions', label: 'Stock Takes', icon: ClipboardList },
+  { href: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/stores',       label: 'Stores',       icon: Store },
+  { href: '/sessions',     label: 'Stock Takes',  icon: ClipboardList },
+  { href: '/admin/users',  label: 'Admin users',  icon: Users },
 ]
 
 export function Sidebar() {

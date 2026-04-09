@@ -15,11 +15,21 @@ type Service interface {
 	GetVarianceReport(ctx context.Context, sessionID string, tolerancePct float64) ([]ConsolidatedLine, error)
 	FlagItems(ctx context.Context, sessionID, flaggedBy string, itemNos []string) error
 	UpdateFlag(ctx context.Context, flagID, reviewedBy, decision, notes string) error
+	GetFlags(ctx context.Context, sessionID string) ([]VarianceFlag, error)
 }
 
 type service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) Service { return &service{db: db} }
+
+func (s *service) GetFlags(ctx context.Context, sessionID string) ([]VarianceFlag, error) {
+    var flags []VarianceFlag
+    err := s.db.WithContext(ctx).
+        Where("session_id = ?", sessionID).
+        Order("flagged_at desc").
+        Find(&flags).Error
+    return flags, err
+}
 
 func (s *service) GetConsolidated(ctx context.Context, sessionID string) ([]ConsolidatedLine, error) {
 	var lines []ConsolidatedLine
@@ -125,6 +135,16 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/sessions/:id/variance-report", h.GetVarianceReport)
 	rg.POST("/sessions/:id/variance-flags", h.FlagItems)
 	rg.PUT("/sessions/:id/variance-flags/:flag_id", h.UpdateFlag)
+	rg.GET("/sessions/:id/variance-flags", h.GetFlags)
+}
+
+func (h *Handler) GetFlags(c *gin.Context) {
+    flags, err := h.svc.GetFlags(c.Request.Context(), c.Param("id"))
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, flags)
 }
 
 func (h *Handler) GetConsolidated(c *gin.Context) {

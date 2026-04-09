@@ -53,6 +53,7 @@ export interface Session {
   session_date: string
   type: SessionType
   status: SessionStatus
+  variance_tolerance_pct: number
   created_by: string
   created_at: string
 }
@@ -135,8 +136,13 @@ export interface CounterPerformance {
   recount_rate_pct: number
   recount_accepted: number
   recount_rejected: number
-  // avg_time_per_bay_seconds: number  // coming in a future release
   last_activity: string
+}
+
+export interface HourlyActivity {
+  counter_id: string
+  hour: number
+  count: number
 }
 
 export interface SessionSummary {
@@ -146,6 +152,16 @@ export interface SessionSummary {
   bays_completed: number
   total_counts: number
   counters: CounterPerformance[]
+  hourly_activity: HourlyActivity[]
+}
+
+// Admin users
+export interface AdminUser {
+  id: string
+  username: string
+  full_name: string
+  active: boolean
+  created_at: string
 }
 
 // WebSocket events
