@@ -43,7 +43,7 @@ export default function AuditPage() {
 
       <Card>
         <CardBody className="p-0">
-          {filtered.length === 0 ? (
+          {(filtered?? []).length === 0 ? (
             <Empty message={filter ? 'No matching items.' : 'No count lines yet.'} />
           ) : (
             <table className="w-full text-sm">

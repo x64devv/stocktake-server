@@ -4,26 +4,27 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { sessions as sessionsApi, stores } from '@/lib/api'
 import type { Session, Counter, Store } from '@/types'
-import { Button, Card, CardBody, CardHeader, Badge, Spinner, Empty, StatCard } from '@/components/ui'
+import { Button, Card, CardBody, CardHeader, Spinner, Empty, StatCard } from '@/components/ui'
 
 const STATUS_ACTIONS: Record<string, { label: string; next: string; variant: 'primary' | 'danger' | 'secondary' }[]> = {
-  DRAFT: [{ label: 'Activate session', next: 'ACTIVE', variant: 'primary' }],
-  ACTIVE: [{ label: 'Mark counting complete', next: 'COUNTING_COMPLETE', variant: 'secondary' }],
-  COUNTING_COMPLETE: [{ label: 'Pull theoretical stock', next: 'pull_theoretical', variant: 'primary' }],
-  PENDING_REVIEW: [{ label: 'Submit to LS / BC', next: 'submit', variant: 'primary' }],
+  DRAFT:             [{ label: 'Activate session',       next: 'ACTIVE',            variant: 'primary'   }],
+  ACTIVE:            [{ label: 'Mark counting complete', next: 'COUNTING_COMPLETE', variant: 'secondary' }],
+  COUNTING_COMPLETE: [{ label: 'Pull theoretical stock', next: 'pull_theoretical',  variant: 'primary'   }],
+  PENDING_REVIEW:    [{ label: 'Submit to LS / BC',      next: 'submit',            variant: 'primary'   }],
   SUBMITTED: [],
-  CLOSED: [],
+  CLOSED:    [],
 }
 
 export default function SessionOverviewPage() {
   const { id } = useParams<{ id: string }>()
-  const [session, setSession] = useState<Session | null>(null)
-  const [store, setStore] = useState<Store | null>(null)
-  const [counters, setCounters] = useState<Counter[]>([])
-  const [loading, setLoading] = useState(true)
+  const [session, setSession]     = useState<Session | null>(null)
+  const [store, setStore]         = useState<Store | null>(null)
+  const [counters, setCounters]   = useState<Counter[]>([])
+  const [loading, setLoading]     = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
-  const [addLoading, setAddLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [addLoading, setAddLoading]       = useState(false)
+  const [resendingId, setResendingId]     = useState<string | null>(null)
+  const [error, setError]     = useState('')
   const [success, setSuccess] = useState('')
   const [newCounter, setNewCounter] = useState({ name: '', mobile: '' })
 
@@ -75,7 +76,7 @@ export default function SessionOverviewPage() {
       const counter = await sessionsApi.addCounter(id, newCounter.name, newCounter.mobile)
       setCounters(prev => [...prev, counter])
       setNewCounter({ name: '', mobile: '' })
-      setSuccess(`${newCounter.name} added. They will receive an OTP when they log in to the mobile app.`)
+      setSuccess(`${newCounter.name} added.`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to add counter')
     } finally {
@@ -84,6 +85,7 @@ export default function SessionOverviewPage() {
   }
 
   async function handleRemoveCounter(counterId: string) {
+    setError('')
     try {
       await sessionsApi.removeCounter(id, counterId)
       setCounters(prev => prev.filter(c => c.id !== counterId))
@@ -92,25 +94,36 @@ export default function SessionOverviewPage() {
     }
   }
 
+  async function handleResendOtp(counter: Counter) {
+    setResendingId(counter.id)
+    setError('')
+    setSuccess('')
+    try {
+      await sessionsApi.resendOtp(id, counter.id)
+      setSuccess(`OTP resent to ${counter.name} (${counter.mobile_number}).`)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to resend OTP')
+    } finally {
+      setResendingId(null)
+    }
+  }
+
   if (loading) return <div className="flex justify-center items-center h-64"><Spinner size="lg" /></div>
   if (!session) return <div className="p-6 text-gray-500">Session not found.</div>
 
   const actions = STATUS_ACTIONS[session.status] ?? []
+  const canModifyCounters = session.status === 'DRAFT' || session.status === 'ACTIVE'
 
   return (
     <div className="p-6 space-y-6">
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">{error}</div>
-      )}
-      {success && (
-        <div className="bg-teal-50 border border-teal-200 text-teal-700 text-sm px-4 py-3 rounded-lg">{success}</div>
-      )}
+      {error   && <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">{error}</div>}
+      {success && <div className="bg-teal-50 border border-teal-200 text-teal-700 text-sm px-4 py-3 rounded-lg">{success}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Store" value={store?.store_name ?? '...'} />
-        <StatCard label="Date" value={session.session_date} />
-        <StatCard label="Type" value={session.type} />
-        <StatCard label="Counters" value={counters.length} />
+        <StatCard label="Store"              value={store?.store_name ?? '...'} />
+        <StatCard label="Date"               value={session.session_date} />
+        <StatCard label="Type"               value={session.type} />
+        <StatCard label="Variance tolerance" value={`±${session.variance_tolerance_pct}%`} />
       </div>
 
       {actions.length > 0 && (
@@ -140,10 +153,12 @@ export default function SessionOverviewPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-sm font-semibold text-gray-700">Counters</h2>
+          <h2 className="text-sm font-semibold text-gray-700">
+            Counters <span className="text-gray-400 font-normal ml-1">({counters.length})</span>
+          </h2>
         </CardHeader>
         <CardBody className="space-y-4">
-          {(session.status === 'DRAFT' || session.status === 'ACTIVE') && (
+          {canModifyCounters && (
             <form onSubmit={handleAddCounter} className="flex gap-2 pb-4 border-b border-gray-100">
               <input
                 value={newCounter.name}
@@ -159,9 +174,7 @@ export default function SessionOverviewPage() {
                 className="flex-1 px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 required
               />
-              <Button type="submit" size="sm" loading={addLoading}>
-                Add &amp; send OTP
-              </Button>
+              <Button type="submit" size="sm" loading={addLoading}>Add counter</Button>
             </form>
           )}
 
@@ -171,51 +184,40 @@ export default function SessionOverviewPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Name', 'Mobile', 'Status', ''].map(h => (
+                  {['Name', 'Mobile', ''].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {counters.map(c => (
-                  <tr key={c.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5 font-medium text-gray-900">{c.name}</td>
-                    <td className="px-4 py-2.5 text-gray-600">{c.mobile_number}</td>
-                    <td className="px-4 py-2.5"><Badge color="green">Active</Badge></td>
+                {counters.map(counter => (
+                  <tr key={counter.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 font-medium text-gray-900">{counter.name}</td>
+                    <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{counter.mobile_number}</td>
                     <td className="px-4 py-2.5">
-                      {(session.status === 'DRAFT' || session.status === 'ACTIVE') && (
+                      <div className="flex gap-3 justify-end">
                         <button
-                          onClick={() => handleRemoveCounter(c.id)}
-                          className="text-xs text-red-500 hover:text-red-700 font-medium"
+                          onClick={() => handleResendOtp(counter)}
+                          disabled={resendingId === counter.id}
+                          className="text-xs text-teal-600 hover:text-teal-700 font-medium disabled:opacity-50"
                         >
-                          Remove
+                          {resendingId === counter.id ? 'Sending…' : 'Resend OTP'}
                         </button>
-                      )}
+                        {canModifyCounters && (
+                          <button
+                            onClick={() => handleRemoveCounter(counter.id)}
+                            className="text-xs text-red-500 hover:text-red-600 font-medium"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader><h2 className="text-sm font-semibold text-gray-700">Session details</h2></CardHeader>
-        <CardBody>
-          <dl className="grid grid-cols-2 gap-4 text-sm">
-            {[
-              ['Session ID', session.id],
-              ['LS store code', store?.ls_store_code ?? '—'],
-              ['Created', new Date(session.created_at).toLocaleString()],
-              ['Store code', store?.store_code ?? '—'],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <dt className="text-gray-400 text-xs">{label}</dt>
-                <dd className="text-gray-900 font-mono text-xs mt-0.5 break-all">{value}</dd>
-              </div>
-            ))}
-          </dl>
         </CardBody>
       </Card>
     </div>

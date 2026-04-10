@@ -17,6 +17,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+export const auth = {
+  login: (username: string, password: string) =>
+    request<{ token: string }>('/auth/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
+}
+
 // ── Stores ────────────────────────────────────────────────────────────────────
 export const stores = {
   list: () => request<import('@/types').Store[]>('/stores'),
@@ -32,6 +41,7 @@ export const stores = {
     request<import('@/types').Aisle>(`/stores/${storeId}/aisles`, { method: 'POST', body: JSON.stringify(data) }),
   createBay: (storeId: string, data: Partial<import('@/types').Bay>) =>
     request<import('@/types').Bay>(`/stores/${storeId}/bays`, { method: 'POST', body: JSON.stringify(data) }),
+  labelsUrl: (id: string) => `${API_BASE}/stores/${id}/labels`,
   allLabelsUrl: (id: string) => `${API_BASE}/stores/${id}/labels`,
   bayLabelUrl: (id: string, bayId: string) => `${API_BASE}/stores/${id}/bays/${bayId}/label`,
 }
