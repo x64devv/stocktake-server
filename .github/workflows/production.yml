@@ -99,8 +99,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key \
               -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "curl -sf http://localhost:8000/api/v1/health || (echo 'Health check failed' && exit 1)"
-
+              "curl -sf http://localhost:8080/health || (echo 'Health check failed' && exit 1)"
       # ── 7. Notify on failure ──────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
