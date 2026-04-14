@@ -49,14 +49,18 @@ func (s *service) GetSession(ctx context.Context, id string) (*Session, error) {
 }
 
 func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, error) {
-	// Enforce one active session per store (§4.2)
-	var count int64
-	s.db.WithContext(ctx).Model(&Session{}).
-		Where("store_id = ? AND status IN ?", sess.StoreID,
-			[]string{"ACTIVE", "COUNTING_COMPLETE", "PENDING_REVIEW"}).
-		Count(&count)
-	if count > 0 {
-		return nil, fmt.Errorf("store already has an active stock take session")
+	// Enforce one active session per store per type.
+	// Multiple types can run concurrently (e.g. FLOOR + BAKERY + BUTCHERY).
+	// PARTIAL sessions are exempt — no limit on concurrent partials.
+	if sess.Type != TypePartial {
+		var count int64
+		s.db.WithContext(ctx).Model(&Session{}).
+			Where("store_id = ? AND type = ? AND status IN ?", sess.StoreID, sess.Type,
+				[]string{"DRAFT", "ACTIVE", "COUNTING_COMPLETE", "PENDING_REVIEW"}).
+			Count(&count)
+		if count > 0 {
+			return nil, fmt.Errorf("store already has an active %s stock take session", sess.Type)
+		}
 	}
 	sess.Status = StatusDraft
 	if sess.VarianceTolerancePct == 0 {
@@ -128,8 +132,8 @@ func (s *service) PullTheoretical(ctx context.Context, sessionID string) error {
 	var store struct{ LSStoreCode string }
 	if err := s.db.WithContext(ctx).Raw(
 		`SELECT stores.ls_store_code FROM stores
-		 JOIN stock_take_sessions ON stock_take_sessions.store_id = stores.id
-		 WHERE stock_take_sessions.id = ?`, sessionID,
+		 JOIN sessions ON sessions.store_id = stores.id
+		 WHERE sessions.id = ?`, sessionID,
 	).Scan(&store).Error; err != nil {
 		return fmt.Errorf("get store LS code: %w", err)
 	}
@@ -174,8 +178,8 @@ func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
 	var store struct{ LSStoreCode string }
 	s.db.WithContext(ctx).Raw(
 		`SELECT stores.ls_store_code FROM stores
-		 JOIN stock_take_sessions ON stock_take_sessions.store_id = stores.id
-		 WHERE stock_take_sessions.id = ?`, sessionID,
+		 JOIN sessions ON sessions.store_id = stores.id
+		 WHERE sessions.id = ?`, sessionID,
 	).Scan(&store)
 
 	var wsLines []ls.WorksheetLine
