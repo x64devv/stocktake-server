@@ -6,6 +6,20 @@ import { sessions, stores } from '@/lib/api'
 import type { Store } from '@/types'
 import { Button, Card, CardBody, CardHeader, Spinner } from '@/components/ui'
 
+const SESSION_TYPES = [
+  { value: 'FLOOR',      label: 'Floor',        partial: false },
+  { value: 'BAKERY',     label: 'Bakery',        partial: false },
+  { value: 'BUTCHERY',   label: 'Butchery',      partial: false },
+  { value: 'FRUIT_VEG',  label: 'Fruit & Veg',   partial: false },
+  { value: 'DELI_COLD',  label: 'Deli Cold',     partial: false },
+  { value: 'DELI_HOT',   label: 'Deli Hot',      partial: false },
+  { value: 'QSR',        label: 'QSR',           partial: false },
+  { value: 'RESTAURANT', label: 'Restaurant',    partial: false },
+  { value: 'PARTIAL',    label: 'Partial (select items)', partial: true },
+] as const
+
+type SessionTypeValue = typeof SESSION_TYPES[number]['value']
+
 export default function NewSessionPage() {
   const router = useRouter()
   const [storeList, setStoreList] = useState<Store[]>([])
@@ -13,8 +27,9 @@ export default function NewSessionPage() {
   const [form, setForm] = useState({
     store_id: '',
     session_date: new Date().toISOString().slice(0, 10),
-    type: 'FULL' as 'FULL' | 'PARTIAL',
+    type: 'FLOOR' as SessionTypeValue,
     variance_tolerance_pct: 2.0,
+    worksheet_no: '',
   })
   const [error, setError] = useState('')
 
@@ -22,13 +37,19 @@ export default function NewSessionPage() {
     stores.list().then(setStoreList)
   }, [])
 
+  const isPartial = form.type === 'PARTIAL'
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.store_id) { setError('Please select a store'); return }
     setLoading(true)
     setError('')
     try {
-      const sess = await sessions.create(form)
+      const payload = {
+        ...form,
+        worksheet_no: form.worksheet_no.trim() || undefined,
+      }
+      const sess = await sessions.create(payload)
       router.push(`/sessions/${sess.id}/monitor`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create session')
@@ -48,6 +69,8 @@ export default function NewSessionPage() {
         <CardHeader><h2 className="text-sm font-semibold text-gray-700">Session details</h2></CardHeader>
         <CardBody>
           <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* Store */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Store</label>
               <select
@@ -63,6 +86,7 @@ export default function NewSessionPage() {
               </select>
             </div>
 
+            {/* Count date */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Count date</label>
               <input
@@ -74,30 +98,44 @@ export default function NewSessionPage() {
               />
             </div>
 
+            {/* Count type */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-2">Count type</label>
-              <div className="flex gap-3">
-                {(['FULL', 'PARTIAL'] as const).map(t => (
-                  <label key={t} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="type"
-                      value={t}
-                      checked={form.type === t}
-                      onChange={() => setForm(f => ({ ...f, type: t }))}
-                      className="text-teal-600 focus:ring-teal-500"
-                    />
-                    <span className="text-sm text-gray-700">
-                      {t === 'FULL' ? 'Full store count' : 'Partial (select items)'}
-                    </span>
-                  </label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Count type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm(f => ({ ...f, type: e.target.value as SessionTypeValue }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                required
+              >
+                {SESSION_TYPES.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
-              </div>
-              {form.type === 'PARTIAL' && (
-                <p className="mt-2 text-xs text-gray-400">Item selection will be available after creation.</p>
+              </select>
+              {isPartial && (
+                <p className="mt-1.5 text-xs text-gray-400">Item selection will be available after creation.</p>
               )}
             </div>
 
+            {/* LS Worksheet number (not shown for Partial) */}
+            {!isPartial && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  LS Worksheet no. <span className="text-gray-400 font-normal">(optional — can be set later)</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.worksheet_no}
+                  onChange={e => setForm(f => ({ ...f, worksheet_no: e.target.value }))}
+                  placeholder="e.g. ST-FLOOR-001"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  The LS Retail worksheet this session will pull theoreticals from.
+                </p>
+              </div>
+            )}
+
+            {/* Variance tolerance */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Variance tolerance (%)
@@ -112,7 +150,7 @@ export default function NewSessionPage() {
                 className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Items with variance beyond this % will appear in the variance report. Default is 2%.
+                Items beyond this % will appear in the variance report. Default is 2%.
               </p>
             </div>
 

@@ -38,7 +38,17 @@ export interface StoreLayout {
 }
 
 // Sessions
-export type SessionType = 'FULL' | 'PARTIAL'
+export type SessionType =
+  | 'FLOOR'
+  | 'BAKERY'
+  | 'BUTCHERY'
+  | 'FRUIT_VEG'
+  | 'DELI_COLD'
+  | 'DELI_HOT'
+  | 'QSR'
+  | 'RESTAURANT'
+  | 'PARTIAL'
+  | 'FULL' // legacy — kept for existing data compatibility
 export type SessionStatus =
   | 'DRAFT'
   | 'ACTIVE'
@@ -54,6 +64,7 @@ export interface Session {
   type: SessionType
   status: SessionStatus
   variance_tolerance_pct: number
+  worksheet_no?: string
   created_by: string
   created_at: string
 }
