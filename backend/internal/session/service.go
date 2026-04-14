@@ -14,6 +14,7 @@ type Service interface {
 	ListSessions(ctx context.Context, storeID string) ([]Session, error)
 	GetSession(ctx context.Context, id string) (*Session, error)
 	CreateSession(ctx context.Context, s Session) (*Session, error)
+	UpdateSession(ctx context.Context, id string, worksheetNo string) (*Session, error)
 	UpdateStatus(ctx context.Context, id string, status SessionStatus) error
 	AddCounter(ctx context.Context, sessionID, counterID string) error
 	RemoveCounter(ctx context.Context, sessionID, counterID string) error
@@ -22,12 +23,21 @@ type Service interface {
 	UpsertCounter(ctx context.Context, name, mobile string) (*auth.Counter, error)
 	ListCounters(ctx context.Context, sessionID string) ([]auth.Counter, error)
 	GetCounterSessions(ctx context.Context, counterID string) ([]Session, error)
+	GetAvailableWorksheets(ctx context.Context) ([]ls.AvailableWorksheet, error)
 }
 
 type service struct {
 	db       *gorm.DB
 	lsClient *ls.Client
 	hub      *ws.Hub
+}
+
+// strVal safely dereferences a *string, returning "" if nil
+func strVal(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func NewService(db *gorm.DB, lsClient *ls.Client, hub *ws.Hub) Service {
@@ -49,9 +59,6 @@ func (s *service) GetSession(ctx context.Context, id string) (*Session, error) {
 }
 
 func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, error) {
-	// Enforce one active session per store per type.
-	// Multiple types can run concurrently (e.g. FLOOR + BAKERY + BUTCHERY).
-	// PARTIAL sessions are exempt — no limit on concurrent partials.
 	if sess.Type != TypePartial {
 		var count int64
 		s.db.WithContext(ctx).Model(&Session{}).
@@ -66,10 +73,43 @@ func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, er
 	if sess.VarianceTolerancePct == 0 {
 		sess.VarianceTolerancePct = 2.0
 	}
-	return &sess, s.db.WithContext(ctx).Create(&sess).Error
+	if err := s.db.WithContext(ctx).Create(&sess).Error; err != nil {
+		return nil, err
+	}
+
+	// Auto-pull theoreticals if a worksheet was linked at creation
+	if strVal(sess.WorksheetNo) != "" {
+    if err := s.pullTheoreticalByBatch(ctx, sess.ID, strVal(sess.WorksheetNo)); err != nil {
+        _ = err
+    }
+}
+	if strVal(sess.WorksheetNo) != "" {
+    if err := s.pullTheoreticalByBatch(ctx, sess.ID, strVal(sess.WorksheetNo)); err != nil {
+        _ = err
+    }
 }
 
-// UpdateStatus persists the new status and broadcasts session.status_changed over WebSocket (§7.6).
+	return &sess, nil
+}
+
+// UpdateSession updates the linked worksheet and re-pulls theoreticals
+func (s *service) UpdateSession(ctx context.Context, id string, worksheetNo string) (*Session, error) {
+	if err := s.db.WithContext(ctx).Model(&Session{}).
+		Where("id = ?", id).
+		Update("worksheet_no", worksheetNo).Error; err != nil {
+		return nil, err
+	}
+
+	// Re-pull theoreticals with the new worksheet
+	if worksheetNo != "" {
+		if err := s.pullTheoreticalByBatch(ctx, id, worksheetNo); err != nil {
+			return nil, fmt.Errorf("worksheet updated but theoretical pull failed: %w", err)
+		}
+	}
+
+	return s.GetSession(ctx, id)
+}
+
 func (s *service) UpdateStatus(ctx context.Context, id string, status SessionStatus) error {
 	if err := s.db.WithContext(ctx).Model(&Session{}).
 		Where("id = ?", id).
@@ -82,6 +122,83 @@ func (s *service) UpdateStatus(ctx context.Context, id string, status SessionSta
 		Payload:   map[string]string{"status": string(status)},
 	})
 	return nil
+}
+
+func (s *service) GetAvailableWorksheets(ctx context.Context) ([]ls.AvailableWorksheet, error) {
+	return s.lsClient.GetAvailableWorksheets(ctx)
+}
+
+// PullTheoretical is the manual trigger — uses the session's stored worksheet_no
+func (s *service) PullTheoretical(ctx context.Context, sessionID string) error {
+	sess, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	if strVal(sess.WorksheetNo) == "" {
+		return fmt.Errorf("no worksheet linked to this session — set a worksheet first")
+	}
+	return s.pullTheoreticalByBatch(ctx, sessionID, strVal(sess.WorksheetNo))
+}
+
+// pullTheoreticalByBatch is the internal implementation used by both auto and manual pulls
+func (s *service) pullTheoreticalByBatch(ctx context.Context, sessionID, journalBatch string) error {
+	lines, err := s.lsClient.GetWorksheetLines(ctx, journalBatch)
+	if err != nil {
+		return fmt.Errorf("fetch LS worksheet: %w", err)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx.Where("session_id = ?", sessionID).Delete(&TheoreticalStock{})
+		for _, line := range lines {
+			if err := tx.Create(&TheoreticalStock{
+				SessionID:      sessionID,
+				ItemNo:         line.ItemNo,
+				TheoreticalQty: line.TheoreticalQty,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
+	sess, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	if strVal(sess.WorksheetNo) == "" {
+		return fmt.Errorf("no worksheet linked to this session")
+	}
+
+	type result struct {
+		ItemNo   string
+		TotalQty float64
+	}
+	var results []result
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT item_no, COALESCE(SUM(quantity), 0) AS total_qty
+		FROM count_lines
+		WHERE session_id = ? AND round_no = (
+			SELECT MAX(round_no) FROM count_lines cl2
+			WHERE cl2.session_id = count_lines.session_id AND cl2.item_no = count_lines.item_no
+		)
+		GROUP BY item_no`, sessionID).Scan(&results).Error; err != nil {
+		return err
+	}
+
+	var finalLines []ls.FinalCountLine
+	for _, r := range results {
+		finalLines = append(finalLines, ls.FinalCountLine{
+			ItemNo:     r.ItemNo,
+			CountedQty: r.TotalQty,
+		})
+	}
+
+	if err := s.lsClient.PostFinalCounts(ctx, strVal(sess.WorksheetNo), finalLines); err != nil {
+		return err
+	}
+	return s.UpdateStatus(ctx, sessionID, StatusSubmitted)
 }
 
 func (s *service) UpsertCounter(ctx context.Context, name, mobile string) (*auth.Counter, error) {
@@ -126,69 +243,4 @@ func (s *service) GetCounterSessions(ctx context.Context, counterID string) ([]S
 		Order("sessions.session_date desc").
 		Find(&sessions).Error
 	return sessions, err
-}
-
-func (s *service) PullTheoretical(ctx context.Context, sessionID string) error {
-	var store struct{ LSStoreCode string }
-	if err := s.db.WithContext(ctx).Raw(
-		`SELECT stores.ls_store_code FROM stores
-		 JOIN sessions ON sessions.store_id = stores.id
-		 WHERE sessions.id = ?`, sessionID,
-	).Scan(&store).Error; err != nil {
-		return fmt.Errorf("get store LS code: %w", err)
-	}
-
-	lines, err := s.lsClient.GetWorksheetLines(ctx, store.LSStoreCode)
-	if err != nil {
-		return fmt.Errorf("fetch LS worksheet: %w", err)
-	}
-
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		tx.Where("session_id = ?", sessionID).Delete(&TheoreticalStock{})
-		for _, line := range lines {
-			if err := tx.Create(&TheoreticalStock{
-				SessionID:      sessionID,
-				ItemNo:         line.ItemNo,
-				TheoreticalQty: line.TheoreticalQty,
-			}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
-	type result struct {
-		ItemNo   string
-		TotalQty float64
-	}
-	var results []result
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT item_no, COALESCE(SUM(quantity), 0) AS total_qty
-		FROM count_lines
-		WHERE session_id = ? AND round_no = (
-			SELECT MAX(round_no) FROM count_lines cl2
-			WHERE cl2.session_id = count_lines.session_id AND cl2.item_no = count_lines.item_no
-		)
-		GROUP BY item_no`, sessionID).Scan(&results).Error; err != nil {
-		return err
-	}
-
-	var store struct{ LSStoreCode string }
-	s.db.WithContext(ctx).Raw(
-		`SELECT stores.ls_store_code FROM stores
-		 JOIN sessions ON sessions.store_id = stores.id
-		 WHERE sessions.id = ?`, sessionID,
-	).Scan(&store)
-
-	var wsLines []ls.WorksheetLine
-	for _, r := range results {
-		wsLines = append(wsLines, ls.WorksheetLine{ItemNo: r.ItemNo, TheoreticalQty: r.TotalQty})
-	}
-
-	if err := s.lsClient.PostFinalCounts(ctx, store.LSStoreCode, wsLines); err != nil {
-		return err
-	}
-	return s.UpdateStatus(ctx, sessionID, StatusSubmitted)
 }

@@ -33,7 +33,37 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/sessions/:id/pull-theoretical", h.PullTheoretical)
 	rg.POST("/sessions/:id/submit", h.SubmitToLS)
 
+	rg.GET("/ls/worksheets", h.GetAvailableWorksheets)
+	rg.PUT("/sessions/:id", h.UpdateSession)
+
 	rg.GET("/counter/sessions", h.GetCounterSessions)
+}
+
+
+func (h *Handler) GetAvailableWorksheets(c *gin.Context) {
+	worksheets, err := h.svc.GetAvailableWorksheets(c.Request.Context())
+	if err != nil {
+		// Return empty list rather than error — LS may not be configured yet
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, worksheets)
+}
+
+func (h *Handler) UpdateSession(c *gin.Context) {
+	var req struct {
+		WorksheetNo string `json:"worksheet_no"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	sess, err := h.svc.UpdateSession(c.Request.Context(), c.Param("id"), req.WorksheetNo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sess)
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {

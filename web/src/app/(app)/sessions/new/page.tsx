@@ -2,42 +2,51 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { sessions, stores } from '@/lib/api'
+import { sessions, stores, ls } from '@/lib/api'
 import type { Store } from '@/types'
 import { Button, Card, CardBody, CardHeader, Spinner } from '@/components/ui'
 
 const SESSION_TYPES = [
-  { value: 'FLOOR',      label: 'Floor',        partial: false },
-  { value: 'BAKERY',     label: 'Bakery',        partial: false },
-  { value: 'BUTCHERY',   label: 'Butchery',      partial: false },
-  { value: 'FRUIT_VEG',  label: 'Fruit & Veg',   partial: false },
-  { value: 'DELI_COLD',  label: 'Deli Cold',     partial: false },
-  { value: 'DELI_HOT',   label: 'Deli Hot',      partial: false },
-  { value: 'QSR',        label: 'QSR',           partial: false },
-  { value: 'RESTAURANT', label: 'Restaurant',    partial: false },
-  { value: 'PARTIAL',    label: 'Partial (select items)', partial: true },
+  { value: 'FLOOR',      label: 'Floor'                  },
+  { value: 'BAKERY',     label: 'Bakery'                 },
+  { value: 'BUTCHERY',   label: 'Butchery'               },
+  { value: 'FRUIT_VEG',  label: 'Fruit & Veg'            },
+  { value: 'DELI_COLD',  label: 'Deli Cold'              },
+  { value: 'DELI_HOT',   label: 'Deli Hot'               },
+  { value: 'QSR',        label: 'QSR'                    },
+  { value: 'RESTAURANT', label: 'Restaurant'             },
+  { value: 'PARTIAL',    label: 'Partial (select items)' },
 ] as const
 
 type SessionTypeValue = typeof SESSION_TYPES[number]['value']
+type Worksheet = { journal_template_name: string; journal_batch_name: string }
 
 export default function NewSessionPage() {
   const router = useRouter()
-  const [storeList, setStoreList] = useState<Store[]>([])
-  const [loading, setLoading] = useState(false)
+  const [storeList, setStoreList]       = useState<Store[]>([])
+  const [worksheets, setWorksheets]     = useState<Worksheet[]>([])
+  const [wsLoading, setWsLoading]       = useState(true)
+  const [loading, setLoading]           = useState(false)
   const [form, setForm] = useState({
-    store_id: '',
-    session_date: new Date().toISOString().slice(0, 10),
-    type: 'FLOOR' as SessionTypeValue,
+    store_id:               '',
+    session_date:           new Date().toISOString().slice(0, 10),
+    type:                   'FLOOR' as SessionTypeValue,
     variance_tolerance_pct: 2.0,
-    worksheet_no: '',
+    worksheet_no:           '',
   })
   const [error, setError] = useState('')
 
   useEffect(() => {
     stores.list().then(setStoreList)
+    ls.worksheets()
+      .then(setWorksheets)
+      .catch(() => setWorksheets([]))
+      .finally(() => setWsLoading(false))
   }, [])
 
-  const isPartial = form.type === 'PARTIAL'
+  function set(field: string, value: string | number) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -47,7 +56,7 @@ export default function NewSessionPage() {
     try {
       const payload = {
         ...form,
-        worksheet_no: form.worksheet_no.trim() || undefined,
+        worksheet_no: form.worksheet_no || undefined,
       }
       const sess = await sessions.create(payload)
       router.push(`/sessions/${sess.id}/monitor`)
@@ -59,10 +68,10 @@ export default function NewSessionPage() {
   }
 
   return (
-    <div className="p-6 max-w-lg space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">New stock take</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Create a session to begin counting</p>
+    <div className="p-6 max-w-lg">
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-gray-900">New session</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Create a new stock take session</p>
       </div>
 
       <Card>
@@ -72,86 +81,101 @@ export default function NewSessionPage() {
 
             {/* Store */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Store</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
               <select
                 value={form.store_id}
-                onChange={e => setForm(f => ({ ...f, store_id: e.target.value }))}
+                onChange={e => set('store_id', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 required
               >
                 <option value="">Select a store…</option>
-                {storeList.filter(s => s.active).map(s => (
-                  <option key={s.id} value={s.id}>{s.store_name}</option>
+                {storeList.map(s => (
+                  <option key={s.id} value={s.id}>{s.store_name} ({s.store_code})</option>
                 ))}
               </select>
             </div>
 
-            {/* Count date */}
+            {/* Session date */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Count date</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Session date</label>
               <input
                 type="date"
                 value={form.session_date}
-                onChange={e => setForm(f => ({ ...f, session_date: e.target.value }))}
+                onChange={e => set('session_date', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 required
               />
             </div>
 
-            {/* Count type */}
+            {/* Type */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Count type</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Session type</label>
               <select
                 value={form.type}
-                onChange={e => setForm(f => ({ ...f, type: e.target.value as SessionTypeValue }))}
+                onChange={e => set('type', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
               >
                 {SESSION_TYPES.map(t => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
-              {isPartial && (
-                <p className="mt-1.5 text-xs text-gray-400">Item selection will be available after creation.</p>
-              )}
             </div>
-
-            {/* LS Worksheet number (not shown for Partial) */}
-            {!isPartial && (
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  LS Worksheet no. <span className="text-gray-400 font-normal">(optional — can be set later)</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.worksheet_no}
-                  onChange={e => setForm(f => ({ ...f, worksheet_no: e.target.value }))}
-                  placeholder="e.g. ST-FLOOR-001"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  The LS Retail worksheet this session will pull theoreticals from.
-                </p>
-              </div>
-            )}
 
             {/* Variance tolerance */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Variance tolerance (%)
               </label>
               <input
                 type="number"
-                min="0"
-                max="100"
-                step="0.1"
+                min={0}
+                max={100}
+                step={0.1}
                 value={form.variance_tolerance_pct}
-                onChange={e => setForm(f => ({ ...f, variance_tolerance_pct: parseFloat(e.target.value) || 2.0 }))}
-                className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                onChange={e => set('variance_tolerance_pct', parseFloat(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
-              <p className="text-xs text-gray-400 mt-1">
-                Items beyond this % will appear in the variance report. Default is 2%.
-              </p>
+            </div>
+
+            {/* Worksheet */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                LS worksheet
+                <span className="ml-1 font-normal text-gray-400">(optional — can be set later)</span>
+              </label>
+
+              {wsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+                  <Spinner size="sm" /> Checking LS for available worksheets…
+                </div>
+              ) : worksheets.length > 0 ? (
+                <select
+                  value={form.worksheet_no}
+                  onChange={e => set('worksheet_no', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  <option value="">None — link later</option>
+                  {worksheets.map(w => (
+                    <option key={w.journal_batch_name} value={w.journal_batch_name}>
+                      {w.journal_batch_name}
+                      {w.journal_template_name ? ` (${w.journal_template_name})` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={form.worksheet_no}
+                    onChange={e => set('worksheet_no', e.target.value)}
+                    placeholder="e.g. ST-FLOOR-001 — or leave blank to set later"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <p className="text-xs text-amber-600">
+                    No worksheets found in LS. You can enter a batch name manually or leave blank and link later.
+                  </p>
+                </div>
+              )}
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
@@ -160,6 +184,7 @@ export default function NewSessionPage() {
               <Button type="submit" loading={loading}>Create session</Button>
               <Button type="button" variant="secondary" onClick={() => router.back()}>Cancel</Button>
             </div>
+
           </form>
         </CardBody>
       </Card>

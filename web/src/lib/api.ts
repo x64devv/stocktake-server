@@ -67,8 +67,13 @@ export const sessions = {
     request(`/sessions/${id}/counters/${counterId}/resend-otp`, { method: 'POST' }),
   pullTheoretical: (id: string) =>
     request(`/sessions/${id}/pull-theoretical`, { method: 'POST' }),
-  submit: (id: string) =>
+    submit: (id: string) =>
     request(`/sessions/${id}/submit`, { method: 'POST' }),
+  updateWorksheet: (id: string, worksheetNo: string) =>
+    request<import('@/types').Session>(`/sessions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ worksheet_no: worksheetNo }),
+    }),
 }
 
 // ── Variance & Audit ──────────────────────────────────────────────────────────
@@ -112,4 +117,9 @@ export const adminUsers = {
     request(`/admin/users/${id}/deactivate`, { method: 'PUT' }),
   resetPassword: (id: string, password: string) =>
     request(`/admin/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password }) }),
+}
+// ── LS Integration ────────────────────────────────────────────────────────────
+export const ls = {
+  worksheets: () =>
+    request<{ journal_template_name: string; journal_batch_name: string }[]>('/ls/worksheets'),
 }
