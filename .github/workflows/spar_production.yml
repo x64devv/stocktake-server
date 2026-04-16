@@ -23,14 +23,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openvpn openvpn-systemd-resolved
 
+      - name: Install OpenVPN
+        run: sudo apt-get install -y openvpn openvpn-systemd-resolved
+
       - name: Connect to VPN
         run: |
           echo "${{ secrets.OVPN_CONFIG }}" > vpn.ovpn
-          sudo openvpn --config vpn.ovpn --daemon --log /tmp/ovpn.log
-          # Wait for tunnel to establish
-          sleep 10
-          # Verify connectivity to server
-          ping -c 3 ${{ vars.SSH_HOST }} || (cat /tmp/ovpn.log && exit 1)
+          printf '%s\n%s\n' \
+            "${{ secrets.VPN_USERNAME }}" \
+            "${{ secrets.VPN_PASSWORD }}" > vpn-auth.txt
+          chmod 600 vpn.ovpn vpn-auth.txt
+          sudo openvpn \
+            --config vpn.ovpn \
+            --auth-user-pass vpn-auth.txt \
+            --daemon \
+            --log /tmp/ovpn.log
+          echo "Waiting for tunnel..."
+          for i in $(seq 1 12); do
+            sleep 5
+            if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
+              echo "VPN connected — server reachable"
+              exit 0
+            fi
+            echo "Attempt $i/12..."
+          done
+          echo "=== VPN LOG ==="
+          cat /tmp/ovpn.log
+          exit 1
 
       # ── SSH ───────────────────────────────────────────────────────────────────
       - name: Configure SSH
