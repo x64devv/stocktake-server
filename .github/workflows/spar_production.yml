@@ -11,7 +11,7 @@ jobs:
     name: Deploy to Windows 11 Server
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: production
+    environment: testing
 
     steps:
       - name: Checkout code
