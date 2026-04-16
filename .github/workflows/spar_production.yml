@@ -29,12 +29,8 @@ jobs:
       - name: Connect to VPN
         run: |
           echo "${{ secrets.OVPN_CONFIG }}" > vpn.ovpn
-          # Remove problematic lines for OpenVPN 2.6
           sed -i '/^verify-x509-name/d' vpn.ovpn
           sed -i '/^;/d' vpn.ovpn
-          # Verify the fix
-          echo "=== Config preview ==="
-          head -20 vpn.ovpn
           printf '%s\n%s\n' \
             "${{ secrets.VPN_USERNAME }}" \
             "${{ secrets.VPN_PASSWORD }}" > vpn-auth.txt
@@ -42,11 +38,12 @@ jobs:
           sudo openvpn \
             --config vpn.ovpn \
             --auth-user-pass vpn-auth.txt \
-            --daemon \
-            --log /tmp/ovpn.log
+            --log /tmp/ovpn.log \
+            --daemon
           echo "Waiting for tunnel..."
           for i in $(seq 1 12); do
             sleep 5
+            sudo cat /tmp/ovpn.log | tail -5 || true
             if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
               echo "VPN connected — server reachable"
               exit 0
@@ -54,7 +51,7 @@ jobs:
             echo "Attempt $i/12..."
           done
           echo "=== VPN LOG ==="
-          cat /tmp/ovpn.log
+          sudo cat /tmp/ovpn.log
           exit 1
 
       # ── SSH ───────────────────────────────────────────────────────────────────
