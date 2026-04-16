@@ -1,0 +1,101 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Windows 11 Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── OpenVPN ───────────────────────────────────────────────────────────────
+      - name: Install OpenVPN
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openvpn openvpn-systemd-resolved
+
+      - name: Connect to VPN
+        run: |
+          echo "${{ secrets.OVPN_CONFIG }}" > vpn.ovpn
+          sudo openvpn --config vpn.ovpn --daemon --log /tmp/ovpn.log
+          # Wait for tunnel to establish
+          sleep 10
+          # Verify connectivity to server
+          ping -c 3 ${{ vars.SSH_HOST }} || (cat /tmp/ovpn.log && exit 1)
+
+      # ── SSH ───────────────────────────────────────────────────────────────────
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ vars.SSH_PORT }} -H ${{ vars.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      # ── Write .env ────────────────────────────────────────────────────────────
+      - name: Write .env to server
+        run: |
+          printf '%s\n' \
+            "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
+            "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
+            "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
+            "OTP_SECRET=${{ secrets.OTP_SECRET }}" \
+            "SMS_API_KEY=${{ secrets.SMS_API_KEY }}" \
+            "SMS_BASE_URL=https://sms.localhost.co.zw/api" \
+            "LS_BASE_URL=${{ vars.LS_BASE_URL }}" \
+            "LS_USERNAME=${{ vars.LS_USERNAME }}" \
+            "LS_PASSWORD=${{ secrets.LS_PASSWORD }}" \
+            "LS_COMPANY_ID=${{ vars.LS_COMPANY_ID }}" \
+            "PUBLIC_WS_URL=${{ vars.PUBLIC_WS_URL }}" \
+            "OTP_EXPIRY_MINUTES=10" \
+            "OTP_MAX_REQUESTS=3" \
+            "COUNTER_TOKEN_HOURS=12" \
+            "ADMIN_TOKEN_HOURS=8" \
+            "VARIANCE_TOLERANCE_PCT=2.0" \
+          | ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+                ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+                "cat > ${{ vars.DEPLOY_PATH }}/.env"
+
+      # ── Sync code ─────────────────────────────────────────────────────────────
+      - name: Sync code
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
+            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:${{ vars.DEPLOY_PATH }}/
+
+      # ── Deploy ────────────────────────────────────────────────────────────────
+      - name: Deploy containers
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "cd /d ${{ vars.DEPLOY_PATH }} && docker compose up --build -d --remove-orphans && docker image prune -f"
+
+      # ── Health check ──────────────────────────────────────────────────────────
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "curl -sf http://localhost:8080/health || exit 1"
+
+      # ── Disconnect VPN ────────────────────────────────────────────────────────
+      - name: Disconnect VPN
+        if: always()
+        run: sudo killall openvpn || true
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::Deployment failed — check logs above"
