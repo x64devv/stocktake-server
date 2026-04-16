@@ -43,16 +43,21 @@ jobs:
           echo "Waiting for tunnel..."
           for i in $(seq 1 12); do
             sleep 5
-            sudo cat /tmp/ovpn.log | tail -5 || true
-            if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
-              echo "VPN connected — server reachable"
-              exit 0
+            if sudo grep -q "Initialization Sequence Completed" /tmp/ovpn.log 2>/dev/null; then
+              echo "VPN tunnel established"
+              break
             fi
             echo "Attempt $i/12..."
           done
-          echo "=== VPN LOG ==="
-          sudo cat /tmp/ovpn.log
-          exit 1
+          # Verify tunnel is up
+          sudo grep -q "Initialization Sequence Completed" /tmp/ovpn.log \
+            || (sudo cat /tmp/ovpn.log && exit 1)
+          echo "Assigned VPN IP:"
+          sudo cat /tmp/ovpn.log | grep "net_addr_v4_add"
+          echo "Testing server reachability..."
+          ping -c 3 -W 2 ${{ vars.SSH_HOST }} \
+            && echo "Server reachable" \
+            || echo "WARNING: ping failed — SSH will determine if server is reachable"
 
       # ── SSH ───────────────────────────────────────────────────────────────────
       - name: Configure SSH
