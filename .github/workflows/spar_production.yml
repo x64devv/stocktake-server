@@ -29,10 +29,12 @@ jobs:
       - name: Connect to VPN
         run: |
           echo "${{ secrets.OVPN_CONFIG }}" > vpn.ovpn
-          # Fix verify-x509-name format for OpenVPN 2.6+
-          sed -i 's/verify-x509-name ".*"/verify-x509-name "Appliance_Certificate_tc3iamIOcmlsWqQ" name/' vpn.ovpn
-          # Remove unsupported inline options
+          # Remove problematic lines for OpenVPN 2.6
+          sed -i '/^verify-x509-name/d' vpn.ovpn
           sed -i '/^;/d' vpn.ovpn
+          # Verify the fix
+          echo "=== Config preview ==="
+          head -20 vpn.ovpn
           printf '%s\n%s\n' \
             "${{ secrets.VPN_USERNAME }}" \
             "${{ secrets.VPN_PASSWORD }}" > vpn-auth.txt
