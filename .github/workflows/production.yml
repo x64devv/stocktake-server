@@ -3,7 +3,7 @@ name: Deploy to Production
 on:
   push:
     branches:
-      - main          # triggers on every push to main
+      - mains          # triggers on every push to main
   workflow_dispatch:  # allows manual trigger from GitHub UI
 
 jobs:
