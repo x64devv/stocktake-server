@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to Windows 11 Server
+    name: Deploy to Spar Server
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: testing
@@ -70,26 +70,57 @@ jobs:
       # ── Write .env ────────────────────────────────────────────────────────────
       - name: Write .env to server
         run: |
-          printf '%s\n' \
-            "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" \
-            "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
-            "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
-            "OTP_SECRET=${{ secrets.OTP_SECRET }}" \
-            "SMS_API_KEY=${{ secrets.SMS_API_KEY }}" \
-            "SMS_BASE_URL=https://sms.localhost.co.zw/api" \
-            "LS_BASE_URL=${{ vars.LS_BASE_URL }}" \
-            "LS_USERNAME=${{ vars.LS_USERNAME }}" \
-            "LS_PASSWORD=${{ secrets.LS_PASSWORD }}" \
-            "LS_COMPANY_ID=${{ vars.LS_COMPANY_ID }}" \
-            "PUBLIC_WS_URL=${{ vars.PUBLIC_WS_URL }}" \
-            "OTP_EXPIRY_MINUTES=10" \
-            "OTP_MAX_REQUESTS=3" \
-            "COUNTER_TOKEN_HOURS=12" \
-            "ADMIN_TOKEN_HOURS=8" \
-            "VARIANCE_TOLERANCE_PCT=2.0" \
-          | ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
-                ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-                "cat > ${{ vars.DEPLOY_PATH }}/.env"
+          # Create .env locally on runner first
+          cat > deployment.env << 'EOF'
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          OTP_SECRET=${{ secrets.OTP_SECRET }}
+          SMS_API_KEY=${{ secrets.SMS_API_KEY }}
+          SMS_BASE_URL=https://sms.localhost.co.zw/api
+          LS_BASE_URL=${{ vars.LS_BASE_URL }}
+          LS_USERNAME=${{ vars.LS_USERNAME }}
+          LS_PASSWORD=${{ secrets.LS_PASSWORD }}
+          LS_COMPANY_ID=${{ vars.LS_COMPANY_ID }}
+          PUBLIC_WS_URL=${{ vars.PUBLIC_WS_URL }}
+          OTP_EXPIRY_MINUTES=10
+          OTP_MAX_REQUESTS=3
+          COUNTER_TOKEN_HOURS=12
+          ADMIN_TOKEN_HOURS=8
+          VARIANCE_TOLERANCE_PCT=2.0
+          EOF
+
+          # Ensure deploy directory exists
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "powershell -Command \"New-Item -ItemType Directory -Path 'C:\\stocktake' -Force | Out-Null\""
+
+          # Copy file directly via scp
+          scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
+              deployment.env \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"C:/stocktake/.env"
+
+      - name: Sync code
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
+            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"/c/stocktake/"
+
+      - name: Deploy containers
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "powershell -Command \"Set-Location 'C:\\stocktake'; docker compose up --build -d --remove-orphans; docker image prune -f\""
+
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "powershell -Command \"(Invoke-WebRequest -Uri 'http://localhost:8080/health' -UseBasicParsing).StatusCode\""
 
       # ── Sync code ─────────────────────────────────────────────────────────────
       - name: Sync code
