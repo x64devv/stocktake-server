@@ -100,7 +100,9 @@ jobs:
               --exclude='.github' \
               --exclude='node_modules' \
               --exclude='.env' \
-              -czf deploy.tar.gz .
+              --exclude='deploy.tar.gz' \
+              --warning=no-file-changed \
+              -czf deploy.tar.gz . || [ $? -eq 1 ]
 
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               deploy.tar.gz \
