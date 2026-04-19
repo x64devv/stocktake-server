@@ -102,13 +102,22 @@ jobs:
 
       - name: Sync code
         run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
-            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"/c/stocktake/"
+          # Create a tar archive of the code
+          tar --exclude='.git' \
+              --exclude='.github' \
+              --exclude='node_modules' \
+              --exclude='.env' \
+              -czf deploy.tar.gz .
+
+          # Copy archive to server
+          scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
+              deploy.tar.gz \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"C:/stocktake/deploy.tar.gz"
+
+          # Extract on server
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "powershell -Command \"Set-Location 'C:\\stocktake'; tar -xzf deploy.tar.gz; Remove-Item deploy.tar.gz\""
 
       - name: Deploy containers
         run: |
