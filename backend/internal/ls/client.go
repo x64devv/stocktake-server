@@ -32,21 +32,27 @@ type physInventoryKey struct {
 	LineNo              int     `json:"Line_No"`
 	ItemNo              string  `json:"Item_No"`
 	QtyCalculated       float64 `json:"Qty_Calculated"`
-	ETag                string  `json:"-"` // populated from @odata.etag
+	ETag                string  `json:"-"`
 }
 
 // FinalCountLine is the payload for PostFinalCounts
 type FinalCountLine struct {
-	ItemNo      string
-	CountedQty  float64
+	ItemNo     string
+	CountedQty float64
+}
+
+// AvailableWorksheet represents a physical inventory journal batch in BC
+type AvailableWorksheet struct {
+	JournalTemplateName string `json:"journal_template_name"`
+	JournalBatchName    string `json:"journal_batch_name"`
 }
 
 type Client struct {
-	baseURL   string
-	company   string
-	username  string
-	password  string
-	http      *http.Client
+	baseURL  string
+	company  string
+	username string
+	password string
+	http     *http.Client
 }
 
 func NewClient(baseURL, company, username, password string) *Client {
@@ -64,11 +70,58 @@ func (c *Client) oDataURL(entity string) string {
 		c.baseURL, url.PathEscape(c.company), entity)
 }
 
+// GetAvailableWorksheets returns all distinct journal batches that have phys inventory lines
+func (c *Client) GetAvailableWorksheets(ctx context.Context) ([]AvailableWorksheet, error) {
+	endpoint := fmt.Sprintf("%s?$format=json&$select=Journal_Template_Name,Journal_Batch_Name",
+		c.oDataURL("PhysicalInventoryJournals"))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch worksheets: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("LS returned %d fetching worksheets", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			JournalTemplateName string `json:"Journal_Template_Name"`
+			JournalBatchName    string `json:"Journal_Batch_Name"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode worksheets: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	var out []AvailableWorksheet
+	for _, v := range result.Value {
+		key := v.JournalTemplateName + "|" + v.JournalBatchName
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, AvailableWorksheet{
+				JournalTemplateName: v.JournalTemplateName,
+				JournalBatchName:    v.JournalBatchName,
+			})
+		}
+	}
+	return out, nil
+}
+
 // GetWorksheetLines fetches physical inventory journal lines from BC for a given journal batch
 func (c *Client) GetWorksheetLines(ctx context.Context, journalBatch string) ([]WorksheetLine, error) {
 	filter := fmt.Sprintf("Journal_Batch_Name eq '%s'", journalBatch)
 	endpoint := fmt.Sprintf("%s?$filter=%s&$format=json",
-		c.oDataURL("PhysInventoryJournal"), url.QueryEscape(filter))
+		c.oDataURL("PhysicalInventoryJournals"), url.QueryEscape(filter))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -101,7 +154,7 @@ func (c *Client) PostFinalCounts(ctx context.Context, journalBatch string, lines
 	// Step 1: fetch existing journal lines to get composite keys and ETags
 	filter := fmt.Sprintf("Journal_Batch_Name eq '%s'", journalBatch)
 	endpoint := fmt.Sprintf("%s?$filter=%s&$format=json",
-		c.oDataURL("PhysInventoryJournal"), url.QueryEscape(filter))
+		c.oDataURL("PhysicalInventoryJournals"), url.QueryEscape(filter))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -120,7 +173,6 @@ func (c *Client) PostFinalCounts(ctx context.Context, journalBatch string, lines
 		return fmt.Errorf("LS returned %d fetching journal lines", resp.StatusCode)
 	}
 
-	// decode as raw map to capture @odata.etag
 	var raw struct {
 		Value []map[string]interface{} `json:"value"`
 	}
@@ -128,7 +180,6 @@ func (c *Client) PostFinalCounts(ctx context.Context, journalBatch string, lines
 		return fmt.Errorf("decode journal lines: %w", err)
 	}
 
-	// index by ItemNo for quick lookup
 	keysByItem := make(map[string]physInventoryKey)
 	for _, entry := range raw.Value {
 		itemNo, _ := entry["Item_No"].(string)
@@ -155,12 +206,12 @@ func (c *Client) PostFinalCounts(ctx context.Context, journalBatch string, lines
 	for _, line := range lines {
 		key, ok := keysByItem[line.ItemNo]
 		if !ok {
-			// item not in journal — skip (could log a warning)
 			continue
 		}
 
-		patchURL := fmt.Sprintf("%s(Journal_Template_Name='%s',Journal_Batch_Name='%s',Line_No=%d)",
-			c.oDataURL("PhysInventoryJournal"),
+		patchURL := fmt.Sprintf(
+			"%s(Journal_Template_Name='%s',Journal_Batch_Name='%s',Line_No=%d)",
+			c.oDataURL("PhysicalInventoryJournals"),
 			url.PathEscape(key.JournalTemplateName),
 			url.PathEscape(key.JournalBatchName),
 			key.LineNo,
@@ -229,58 +280,4 @@ func (c *Client) GetItems(ctx context.Context) ([]ItemLine, error) {
 		return nil, fmt.Errorf("decode items response: %w", err)
 	}
 	return result.Value, nil
-}
-
-// AvailableWorksheet represents a physical inventory journal batch in BC
-type AvailableWorksheet struct {
-	JournalTemplateName string `json:"journal_template_name"`
-	JournalBatchName    string `json:"journal_batch_name"`
-}
-
-// GetAvailableWorksheets returns all distinct journal batches that have phys inventory lines
-func (c *Client) GetAvailableWorksheets(ctx context.Context) ([]AvailableWorksheet, error) {
-	endpoint := fmt.Sprintf("%s?$format=json&$select=Journal_Template_Name,Journal_Batch_Name",
-		c.oDataURL("PhysInventoryJournal"))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.SetBasicAuth(c.username, c.password)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch worksheets: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LS returned %d fetching worksheets", resp.StatusCode)
-	}
-
-	var result struct {
-		Value []struct {
-			JournalTemplateName string `json:"Journal_Template_Name"`
-			JournalBatchName    string `json:"Journal_Batch_Name"`
-		} `json:"value"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode worksheets: %w", err)
-	}
-
-	// deduplicate by batch name
-	seen := make(map[string]bool)
-	var out []AvailableWorksheet
-	for _, v := range result.Value {
-		key := v.JournalTemplateName + "|" + v.JournalBatchName
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, AvailableWorksheet{
-				JournalTemplateName: v.JournalTemplateName,
-				JournalBatchName:    v.JournalBatchName,
-			})
-		}
-	}
-	return out, nil
 }
