@@ -23,9 +23,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openvpn openvpn-systemd-resolved
 
-      - name: Install OpenVPN
-        run: sudo apt-get install -y openvpn openvpn-systemd-resolved
-
       - name: Connect to VPN
         run: |
           echo "${{ secrets.OVPN_CONFIG }}" > vpn.ovpn
@@ -49,7 +46,6 @@ jobs:
             fi
             echo "Attempt $i/12..."
           done
-          # Verify tunnel is up
           sudo grep -q "Initialization Sequence Completed" /tmp/ovpn.log \
             || (sudo cat /tmp/ovpn.log && exit 1)
           echo "Assigned VPN IP:"
@@ -70,7 +66,6 @@ jobs:
       # ── Write .env ────────────────────────────────────────────────────────────
       - name: Write .env to server
         run: |
-          # Create .env locally on runner first
           cat > deployment.env << 'EOF'
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
@@ -90,78 +85,51 @@ jobs:
           VARIANCE_TOLERANCE_PCT=2.0
           EOF
 
-          # Ensure deploy directory exists
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "powershell -Command \"New-Item -ItemType Directory -Path 'C:\\stocktake' -Force | Out-Null\""
 
-          # Copy file directly via scp
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               deployment.env \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"C:/stocktake/.env"
 
+      # ── Sync code ─────────────────────────────────────────────────────────────
       - name: Sync code
         run: |
-          # Create a tar archive of the code
           tar --exclude='.git' \
               --exclude='.github' \
               --exclude='node_modules' \
               --exclude='.env' \
               -czf deploy.tar.gz .
 
-          # Copy archive to server
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               deploy.tar.gz \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:"C:/stocktake/deploy.tar.gz"
 
-          # Extract on server
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "powershell -Command \"Set-Location 'C:\\stocktake'; tar -xzf deploy.tar.gz; Remove-Item deploy.tar.gz\""
 
+      # ── Deploy ────────────────────────────────────────────────────────────────
       - name: Deploy containers
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "powershell -Command \"Set-Location 'C:\\stocktake'; docker compose up --build -d --remove-orphans; docker image prune -f\""
 
+      # ── Health check ──────────────────────────────────────────────────────────
       - name: Health check
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "powershell -Command \"(Invoke-WebRequest -Uri 'http://localhost:8080/health' -UseBasicParsing).StatusCode\""
 
-      # ── Sync code ─────────────────────────────────────────────────────────────
-      - name: Sync code
-        run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
-            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:${{ vars.DEPLOY_PATH }}/
-
-      # ── Deploy ────────────────────────────────────────────────────────────────
-      - name: Deploy containers
-        run: |
-          ssh -i ~/.ssh/deploy_key \
-              -p ${{ vars.SSH_PORT }} \
-              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "cd /d ${{ vars.DEPLOY_PATH }} && docker compose up --build -d --remove-orphans && docker image prune -f"
-
-      # ── Health check ──────────────────────────────────────────────────────────
-      - name: Health check
-        run: |
-          ssh -i ~/.ssh/deploy_key \
-              -p ${{ vars.SSH_PORT }} \
-              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "curl -sf http://localhost:8080/health || exit 1"
-
       # ── Disconnect VPN ────────────────────────────────────────────────────────
       - name: Disconnect VPN
         if: always()
-        run: sudo killall openvpn || true
+        run: |
+          sudo killall openvpn || true
+          rm -f vpn.ovpn vpn-auth.txt deployment.env deploy.tar.gz
 
       - name: Notify on failure
         if: failure()
