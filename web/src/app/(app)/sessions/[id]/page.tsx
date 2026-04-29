@@ -6,7 +6,12 @@ import { sessions as sessionsApi, stores, ls } from '@/lib/api'
 import type { Session, Counter, Store } from '@/types'
 import { Button, Card, CardBody, CardHeader, Spinner, Empty, StatCard } from '@/components/ui'
 
-type Worksheet = { journal_template_name: string; journal_batch_name: string }
+type Worksheet = {
+  worksheet_seq_no: number
+  description: string
+  store_no: string
+  no_of_lines: number
+}
 
 const STATUS_ACTIONS: Record<string, { label: string; next: string; variant: 'primary' | 'danger' | 'secondary' }[]> = {
   DRAFT:             [{ label: 'Activate session',       next: 'ACTIVE',            variant: 'primary'   }],
@@ -24,15 +29,17 @@ export default function SessionOverviewPage() {
   const [session, setSession]   = useState<Session | null>(null)
   const [store, setStore]       = useState<Store | null>(null)
   const [counters, setCounters] = useState<Counter[]>([])
-  const [worksheets, setWorksheets] = useState<Worksheet[]>([])
+  const [allWorksheets, setAllWorksheets] = useState<Worksheet[]>([])
   const [loading, setLoading]   = useState(true)
 
-  const [actionLoading, setActionLoading]   = useState(false)
-  const [addLoading, setAddLoading]         = useState(false)
-  const [resendingId, setResendingId]       = useState<string | null>(null)
-  const [wsLoading, setWsLoading]           = useState(false)
-  const [resyncLoading, setResyncLoading]   = useState(false)
-  const [selectedWorksheet, setSelectedWorksheet] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [addLoading, setAddLoading]       = useState(false)
+  const [resendingId, setResendingId]     = useState<string | null>(null)
+  const [wsLoading, setWsLoading]         = useState(false)
+  const [resyncLoading, setResyncLoading] = useState(false)
+
+  // selectedWorksheetSeqNo: 0 = none
+  const [selectedWorksheetSeqNo, setSelectedWorksheetSeqNo] = useState(0)
 
   const [error, setError]     = useState('')
   const [success, setSuccess] = useState('')
@@ -41,21 +48,32 @@ export default function SessionOverviewPage() {
   async function load() {
     const sess = await sessionsApi.get(id)
     setSession(sess)
-    setSelectedWorksheet(sess.worksheet_no ?? '')
+    // worksheet_no is stored as a string "161" — parse back to int
+    setSelectedWorksheetSeqNo(sess.worksheet_no ? parseInt(sess.worksheet_no, 10) : 0)
     const [st, ctrs] = await Promise.all([
       stores.get(sess.store_id),
       sessionsApi.listCounters(id),
     ])
     setStore(st)
     setCounters(ctrs ?? [])
+    return st
   }
 
   useEffect(() => {
-    load().finally(() => setLoading(false))
-    ls.worksheets()
-      .then(setWorksheets)
-      .catch(() => setWorksheets([]))
+    load()
+      .then((st) => {
+        // Load worksheets filtered to this store
+        ls.worksheets()
+          .then((data: Worksheet[]) => {
+            const filtered = data.filter(w => !st?.ls_store_code || w.store_no === st.ls_store_code)
+            setAllWorksheets(filtered)
+          })
+          .catch(() => setAllWorksheets([]))
+      })
+      .finally(() => setLoading(false))
   }, [id])
+
+  const worksheetDirty = selectedWorksheetSeqNo !== (session?.worksheet_no ? parseInt(session.worksheet_no, 10) : 0)
 
   async function handleAction(action: string) {
     setActionLoading(true)
@@ -86,10 +104,10 @@ export default function SessionOverviewPage() {
     setError('')
     setSuccess('')
     try {
-      const updated = await sessionsApi.updateWorksheet(id, selectedWorksheet)
+      const updated = await sessionsApi.updateWorksheet(id, selectedWorksheetSeqNo)
       setSession(updated)
       setSuccess(
-        selectedWorksheet
+        selectedWorksheetSeqNo > 0
           ? `Worksheet linked${updated.worksheet_no ? ' and theoreticals synced' : ''}.`
           : 'Worksheet unlinked.'
       )
@@ -161,7 +179,11 @@ export default function SessionOverviewPage() {
   const actions = STATUS_ACTIONS[session.status] ?? []
   const canModifyCounters = session.status === 'DRAFT' || session.status === 'ACTIVE'
   const canEditWorksheet  = EDITABLE_STATUSES.includes(session.status)
-  const worksheetDirty    = selectedWorksheet !== (session.worksheet_no ?? '')
+
+  // Find the display name for the currently linked worksheet
+  const linkedWorksheet = allWorksheets.find(
+    w => session.worksheet_no && w.worksheet_seq_no === parseInt(session.worksheet_no, 10)
+  )
 
   return (
     <div className="p-6 space-y-6">
@@ -182,12 +204,7 @@ export default function SessionOverviewPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700">LS Worksheet</h2>
             {session.worksheet_no && canEditWorksheet && (
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={resyncLoading}
-                onClick={handleResync}
-              >
+              <Button size="sm" variant="secondary" loading={resyncLoading} onClick={handleResync}>
                 Re-sync theoreticals
               </Button>
             )}
@@ -198,30 +215,25 @@ export default function SessionOverviewPage() {
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Linked worksheet (journal batch)
+                  Linked worksheet
                 </label>
-                {worksheets.length > 0 ? (
+                {allWorksheets.length > 0 ? (
                   <select
-                    value={selectedWorksheet}
-                    onChange={e => setSelectedWorksheet(e.target.value)}
+                    value={selectedWorksheetSeqNo}
+                    onChange={e => setSelectedWorksheetSeqNo(parseInt(e.target.value, 10))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                   >
-                    <option value="">None — no theoreticals</option>
-                    {worksheets.map(w => (
-                      <option key={w.journal_batch_name} value={w.journal_batch_name}>
-                        {w.journal_batch_name}
-                        {w.journal_template_name ? ` (${w.journal_template_name})` : ''}
+                    <option value={0}>None — no theoreticals</option>
+                    {allWorksheets.map(w => (
+                      <option key={w.worksheet_seq_no} value={w.worksheet_seq_no}>
+                        {w.description} ({w.no_of_lines} lines)
                       </option>
                     ))}
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    value={selectedWorksheet}
-                    onChange={e => setSelectedWorksheet(e.target.value)}
-                    placeholder="Enter journal batch name manually"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
+                  <p className="text-xs text-gray-400 py-2">
+                    No worksheets available from LS for this store.
+                  </p>
                 )}
               </div>
               <Button
@@ -237,7 +249,9 @@ export default function SessionOverviewPage() {
             <div className="flex items-center gap-2 text-sm">
               <span className="text-gray-500">Linked worksheet:</span>
               {session.worksheet_no
-                ? <span className="font-mono font-medium text-gray-900">{session.worksheet_no}</span>
+                ? <span className="font-medium text-gray-900">
+                    {linkedWorksheet ? linkedWorksheet.description : `#${session.worksheet_no}`}
+                  </span>
                 : <span className="text-gray-400 italic">None</span>
               }
             </div>
@@ -274,9 +288,7 @@ export default function SessionOverviewPage() {
       {/* Counters */}
       <Card>
         <CardHeader>
-          <h2 className="text-sm font-semibold text-gray-700">
-            Counters ({counters.length})
-          </h2>
+          <h2 className="text-sm font-semibold text-gray-700">Counters ({counters.length})</h2>
         </CardHeader>
         <CardBody className="p-0">
           {counters.length === 0 ? (
@@ -287,66 +299,72 @@ export default function SessionOverviewPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Name', 'Mobile', ...(canModifyCounters ? ['', ''] : [])].map((h, i) => (
-                    <th key={i} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">{h}</th>
+                  {['Name', 'Mobile', ...(canModifyCounters ? ['Actions'] : [])].map(h => (
+                    <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-gray-100">
                 {counters.map(c => (
                   <tr key={c.id}>
                     <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
-                    <td className="px-4 py-3 text-gray-600">{c.mobile_number}</td>
+                    <td className="px-4 py-3 text-gray-500">{c.mobile_number}</td>
                     {canModifyCounters && (
-                      <>
-                        <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            loading={resendingId === c.id}
+                      <td className="px-4 py-3">
+                        <div className="flex gap-2">
+                          <button
                             onClick={() => handleResendOtp(c)}
+                            disabled={resendingId === c.id}
+                            className="text-xs text-teal-600 hover:text-teal-800 disabled:opacity-50"
                           >
-                            Resend OTP
-                          </Button>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="danger"
+                            {resendingId === c.id ? 'Sending…' : 'Resend OTP'}
+                          </button>
+                          <button
                             onClick={() => handleRemoveCounter(c.id)}
+                            className="text-xs text-red-500 hover:text-red-700"
                           >
                             Remove
-                          </Button>
-                        </td>
-                      </>
+                          </button>
+                        </div>
+                      </td>
                     )}
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-
-          {canModifyCounters && (
-            <form onSubmit={handleAddCounter} className="flex gap-2 p-4 border-t border-gray-100">
-              <input
-                value={newCounter.name}
-                onChange={e => setNewCounter(n => ({ ...n, name: e.target.value }))}
-                placeholder="Counter name"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
-              />
-              <input
-                value={newCounter.mobile}
-                onChange={e => setNewCounter(n => ({ ...n, mobile: e.target.value }))}
-                placeholder="Mobile number"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
-              />
-              <Button type="submit" size="sm" loading={addLoading}>Add</Button>
-            </form>
-          )}
         </CardBody>
       </Card>
+
+      {/* Add counter */}
+      {canModifyCounters && (
+        <Card>
+          <CardHeader><h2 className="text-sm font-semibold text-gray-700">Add counter</h2></CardHeader>
+          <CardBody>
+            <form onSubmit={handleAddCounter} className="flex gap-3 flex-wrap items-end">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Name</label>
+                <input
+                  value={newCounter.name}
+                  onChange={e => setNewCounter(p => ({ ...p, name: e.target.value }))}
+                  required
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Mobile</label>
+                <input
+                  value={newCounter.mobile}
+                  onChange={e => setNewCounter(p => ({ ...p, mobile: e.target.value }))}
+                  required
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+              <Button type="submit" size="sm" loading={addLoading}>Add</Button>
+            </form>
+          </CardBody>
+        </Card>
+      )}
     </div>
   )
 }

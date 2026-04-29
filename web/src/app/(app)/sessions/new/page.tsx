@@ -2,66 +2,58 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { sessions, stores, ls } from '@/lib/api'
-import type { Store } from '@/types'
+import { stores, ls } from '@/lib/api'
 import { Button, Card, CardBody, CardHeader, Spinner } from '@/components/ui'
 
-const SESSION_TYPES = [
-  { value: 'FLOOR',      label: 'Floor'                  },
-  { value: 'BAKERY',     label: 'Bakery'                 },
-  { value: 'BUTCHERY',   label: 'Butchery'               },
-  { value: 'FRUIT_VEG',  label: 'Fruit & Veg'            },
-  { value: 'DELI_COLD',  label: 'Deli Cold'              },
-  { value: 'DELI_HOT',   label: 'Deli Hot'               },
-  { value: 'QSR',        label: 'QSR'                    },
-  { value: 'RESTAURANT', label: 'Restaurant'             },
-  { value: 'PARTIAL',    label: 'Partial (select items)' },
-] as const
+type LSStore = { code: string; name: string }
 
-type SessionTypeValue = typeof SESSION_TYPES[number]['value']
-type Worksheet = { journal_template_name: string; journal_batch_name: string }
-
-export default function NewSessionPage() {
+export default function NewStorePage() {
   const router = useRouter()
-  const [storeList, setStoreList]       = useState<Store[]>([])
-  const [worksheets, setWorksheets]     = useState<Worksheet[]>([])
-  const [wsLoading, setWsLoading]       = useState(true)
-  const [loading, setLoading]           = useState(false)
+  const [lsStores, setLsStores]     = useState<LSStore[]>([])
+  const [lsLoading, setLsLoading]   = useState(true)
   const [form, setForm] = useState({
-    store_id:               '',
-    session_date:           new Date().toISOString().slice(0, 10),
-    type:                   'FLOOR' as SessionTypeValue,
-    variance_tolerance_pct: 2.0,
-    worksheet_no:           '',
+    store_name:    '',
+    store_code:    '',
+    ls_store_code: '',
   })
-  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState('')
 
   useEffect(() => {
-    stores.list().then(setStoreList)
-    ls.worksheets()
-      .then(setWorksheets)
-      .catch(() => setWorksheets([]))
-      .finally(() => setWsLoading(false))
+    ls.stores()
+      .then((data: LSStore[]) => setLsStores(data))
+      .catch(() => setLsStores([]))
+      .finally(() => setLsLoading(false))
   }, [])
 
-  function set(field: string, value: string | number) {
+  function handleLSStoreSelect(code: string) {
+    const picked = lsStores.find(s => s.code === code)
+    if (!picked) {
+      setForm(f => ({ ...f, ls_store_code: code }))
+      return
+    }
+    // Auto-fill: store_name from LS name, store_code as uppercase slug
+    const slug = picked.code.replace(/\s+/g, '').toUpperCase()
+    setForm({
+      ls_store_code: picked.code,
+      store_name:    picked.name,
+      store_code:    slug,
+    })
+  }
+
+  function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.store_id) { setError('Please select a store'); return }
     setLoading(true)
     setError('')
     try {
-      const payload = {
-        ...form,
-        worksheet_no: form.worksheet_no || undefined,
-      }
-      const sess = await sessions.create(payload)
-      router.push(`/sessions/${sess.id}/monitor`)
+      const store = await stores.create(form)
+      router.push(`/stores/${store.id}`)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create session')
+      setError(err instanceof Error ? err.message : 'Failed to create store')
     } finally {
       setLoading(false)
     }
@@ -70,121 +62,92 @@ export default function NewSessionPage() {
   return (
     <div className="p-6 max-w-lg">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-gray-900">New session</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Create a new stock take session</p>
+        <h1 className="text-xl font-semibold text-gray-900">Add store</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Create a new store record</p>
       </div>
 
       <Card>
-        <CardHeader><h2 className="text-sm font-semibold text-gray-700">Session details</h2></CardHeader>
+        <CardHeader><h2 className="text-sm font-semibold text-gray-700">Store details</h2></CardHeader>
         <CardBody>
           <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* Store */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
-              <select
-                value={form.store_id}
-                onChange={e => set('store_id', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
-              >
-                <option value="">Select a store…</option>
-                {storeList.map(s => (
-                  <option key={s.id} value={s.id}>{s.store_name} ({s.store_code})</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Session date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Session date</label>
-              <input
-                type="date"
-                value={form.session_date}
-                onChange={e => set('session_date', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
-              />
-            </div>
-
-            {/* Type */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Session type</label>
-              <select
-                value={form.type}
-                onChange={e => set('type', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-              >
-                {SESSION_TYPES.map(t => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Variance tolerance */}
+            {/* LS Store picker */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Variance tolerance (%)
+                LS store
+                <span className="ml-1 font-normal text-gray-400">(select to auto-fill)</span>
               </label>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={0.1}
-                value={form.variance_tolerance_pct}
-                onChange={e => set('variance_tolerance_pct', parseFloat(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
-
-            {/* Worksheet */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                LS worksheet
-                <span className="ml-1 font-normal text-gray-400">(optional — can be set later)</span>
-              </label>
-
-              {wsLoading ? (
+              {lsLoading ? (
                 <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
-                  <Spinner size="sm" /> Checking LS for available worksheets…
+                  <Spinner size="sm" /> Loading stores from LS…
                 </div>
-              ) : worksheets.length > 0 ? (
+              ) : lsStores.length > 0 ? (
                 <select
-                  value={form.worksheet_no}
-                  onChange={e => set('worksheet_no', e.target.value)}
+                  value={form.ls_store_code}
+                  onChange={e => handleLSStoreSelect(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 >
-                  <option value="">None — link later</option>
-                  {worksheets.map(w => (
-                    <option key={w.journal_batch_name} value={w.journal_batch_name}>
-                      {w.journal_batch_name}
-                      {w.journal_template_name ? ` (${w.journal_template_name})` : ''}
+                  <option value="">Select from LS…</option>
+                  {lsStores.map(s => (
+                    <option key={s.code} value={s.code}>
+                      {s.name} ({s.code})
                     </option>
                   ))}
                 </select>
               ) : (
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={form.worksheet_no}
-                    onChange={e => set('worksheet_no', e.target.value)}
-                    placeholder="e.g. ST-FLOOR-001 — or leave blank to set later"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                  <p className="text-xs text-amber-600">
-                    No worksheets found in LS. You can enter a batch name manually or leave blank and link later.
-                  </p>
-                </div>
+                <p className="text-xs text-amber-600 py-1">
+                  Could not load stores from LS. Enter the LS store code manually below.
+                </p>
               )}
+            </div>
+
+            {/* Store name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store name</label>
+              <input
+                type="text"
+                value={form.store_name}
+                onChange={e => set('store_name', e.target.value)}
+                placeholder="e.g. Spar Borrowdale"
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
+
+            {/* Store code */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store code</label>
+              <input
+                type="text"
+                value={form.store_code}
+                onChange={e => set('store_code', e.target.value)}
+                placeholder="e.g. BORROW01"
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">Internal short code used in reports</p>
+            </div>
+
+            {/* LS store code */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">LS store code</label>
+              <input
+                type="text"
+                value={form.ls_store_code}
+                onChange={e => set('ls_store_code', e.target.value)}
+                placeholder="Must match the store code in LS"
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">Must match the store code in LS Commerce Service</p>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
 
             <div className="flex gap-3 pt-2">
-              <Button type="submit" loading={loading}>Create session</Button>
+              <Button type="submit" loading={loading}>Save store</Button>
               <Button type="button" variant="secondary" onClick={() => router.back()}>Cancel</Button>
             </div>
-
           </form>
         </CardBody>
       </Card>

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/totalretail/stocktake/internal/auth"
 	"github.com/totalretail/stocktake/internal/ls"
@@ -14,7 +15,7 @@ type Service interface {
 	ListSessions(ctx context.Context, storeID string) ([]Session, error)
 	GetSession(ctx context.Context, id string) (*Session, error)
 	CreateSession(ctx context.Context, s Session) (*Session, error)
-	UpdateSession(ctx context.Context, id string, worksheetNo string) (*Session, error)
+	UpdateSession(ctx context.Context, id string, worksheetSeqNo int) (*Session, error)
 	UpdateStatus(ctx context.Context, id string, status SessionStatus) error
 	AddCounter(ctx context.Context, sessionID, counterID string) error
 	RemoveCounter(ctx context.Context, sessionID, counterID string) error
@@ -24,6 +25,7 @@ type Service interface {
 	ListCounters(ctx context.Context, sessionID string) ([]auth.Counter, error)
 	GetCounterSessions(ctx context.Context, counterID string) ([]Session, error)
 	GetAvailableWorksheets(ctx context.Context) ([]ls.AvailableWorksheet, error)
+	GetLSStores(ctx context.Context) ([]ls.LSStore, error)
 }
 
 type service struct {
@@ -38,6 +40,19 @@ func strVal(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// worksheetSeqNoFromSession parses the stored worksheet_no string back to int.
+// Returns 0 if nil or unparseable.
+func worksheetSeqNoFromSession(sess *Session) int {
+	if sess.WorksheetNo == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(*sess.WorksheetNo)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func NewService(db *gorm.DB, lsClient *ls.Client, hub *ws.Hub) Service {
@@ -78,31 +93,32 @@ func (s *service) CreateSession(ctx context.Context, sess Session) (*Session, er
 	}
 
 	// Auto-pull theoreticals if a worksheet was linked at creation
-	if strVal(sess.WorksheetNo) != "" {
-    if err := s.pullTheoreticalByBatch(ctx, sess.ID, strVal(sess.WorksheetNo)); err != nil {
-        _ = err
-    }
-}
-	if strVal(sess.WorksheetNo) != "" {
-    if err := s.pullTheoreticalByBatch(ctx, sess.ID, strVal(sess.WorksheetNo)); err != nil {
-        _ = err
-    }
-}
+	if seqNo := worksheetSeqNoFromSession(&sess); seqNo > 0 {
+		if err := s.pullTheoreticalBySeqNo(ctx, sess.ID, seqNo); err != nil {
+			// Non-fatal — log and continue
+			_ = err
+		}
+	}
 
 	return &sess, nil
 }
 
-// UpdateSession updates the linked worksheet and re-pulls theoreticals
-func (s *service) UpdateSession(ctx context.Context, id string, worksheetNo string) (*Session, error) {
+// UpdateSession updates the linked worksheet (stored as string) and re-pulls theoreticals
+func (s *service) UpdateSession(ctx context.Context, id string, worksheetSeqNo int) (*Session, error) {
+	var worksheetNoStr *string
+	if worksheetSeqNo > 0 {
+		str := strconv.Itoa(worksheetSeqNo)
+		worksheetNoStr = &str
+	}
+
 	if err := s.db.WithContext(ctx).Model(&Session{}).
 		Where("id = ?", id).
-		Update("worksheet_no", worksheetNo).Error; err != nil {
+		Update("worksheet_no", worksheetNoStr).Error; err != nil {
 		return nil, err
 	}
 
-	// Re-pull theoreticals with the new worksheet
-	if worksheetNo != "" {
-		if err := s.pullTheoreticalByBatch(ctx, id, worksheetNo); err != nil {
+	if worksheetSeqNo > 0 {
+		if err := s.pullTheoreticalBySeqNo(ctx, id, worksheetSeqNo); err != nil {
 			return nil, fmt.Errorf("worksheet updated but theoretical pull failed: %w", err)
 		}
 	}
@@ -128,21 +144,26 @@ func (s *service) GetAvailableWorksheets(ctx context.Context) ([]ls.AvailableWor
 	return s.lsClient.GetAvailableWorksheets(ctx)
 }
 
+func (s *service) GetLSStores(ctx context.Context) ([]ls.LSStore, error) {
+	return s.lsClient.GetLSStores(ctx)
+}
+
 // PullTheoretical is the manual trigger — uses the session's stored worksheet_no
 func (s *service) PullTheoretical(ctx context.Context, sessionID string) error {
 	sess, err := s.GetSession(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
-	if strVal(sess.WorksheetNo) == "" {
+	seqNo := worksheetSeqNoFromSession(sess)
+	if seqNo == 0 {
 		return fmt.Errorf("no worksheet linked to this session — set a worksheet first")
 	}
-	return s.pullTheoreticalByBatch(ctx, sessionID, strVal(sess.WorksheetNo))
+	return s.pullTheoreticalBySeqNo(ctx, sessionID, seqNo)
 }
 
-// pullTheoreticalByBatch is the internal implementation used by both auto and manual pulls
-func (s *service) pullTheoreticalByBatch(ctx context.Context, sessionID, journalBatch string) error {
-	lines, err := s.lsClient.GetWorksheetLines(ctx, journalBatch)
+// pullTheoreticalBySeqNo fetches lines from LS and upserts theoretical stock records
+func (s *service) pullTheoreticalBySeqNo(ctx context.Context, sessionID string, worksheetSeqNo int) error {
+	lines, err := s.lsClient.GetWorksheetLines(ctx, worksheetSeqNo)
 	if err != nil {
 		return fmt.Errorf("fetch LS worksheet: %w", err)
 	}
@@ -167,10 +188,22 @@ func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
-	if strVal(sess.WorksheetNo) == "" {
+	seqNo := worksheetSeqNoFromSession(sess)
+	if seqNo == 0 {
 		return fmt.Errorf("no worksheet linked to this session")
 	}
 
+	// Fetch worksheet lines so we have LineNo for each item
+	wsLines, err := s.lsClient.GetWorksheetLines(ctx, seqNo)
+	if err != nil {
+		return fmt.Errorf("fetch worksheet lines for submit: %w", err)
+	}
+	lineNoByItem := make(map[string]int, len(wsLines))
+	for _, l := range wsLines {
+		lineNoByItem[l.ItemNo] = l.LineNo
+	}
+
+	// Use accepted counts (latest round, accepted variance flags respected)
 	type result struct {
 		ItemNo   string
 		TotalQty float64
@@ -179,7 +212,8 @@ func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT item_no, COALESCE(SUM(quantity), 0) AS total_qty
 		FROM count_lines
-		WHERE session_id = ? AND round_no = (
+		WHERE session_id = ?
+		AND round_no = (
 			SELECT MAX(round_no) FROM count_lines cl2
 			WHERE cl2.session_id = count_lines.session_id AND cl2.item_no = count_lines.item_no
 		)
@@ -189,13 +223,18 @@ func (s *service) SubmitToLS(ctx context.Context, sessionID string) error {
 
 	var finalLines []ls.FinalCountLine
 	for _, r := range results {
+		lineNo, ok := lineNoByItem[r.ItemNo]
+		if !ok {
+			continue // item not in this worksheet — skip
+		}
 		finalLines = append(finalLines, ls.FinalCountLine{
 			ItemNo:     r.ItemNo,
+			LineNo:     lineNo,
 			CountedQty: r.TotalQty,
 		})
 	}
 
-	if err := s.lsClient.PostFinalCounts(ctx, strVal(sess.WorksheetNo), finalLines); err != nil {
+	if err := s.lsClient.PostFinalCounts(ctx, seqNo, finalLines); err != nil {
 		return err
 	}
 	return s.UpdateStatus(ctx, sessionID, StatusSubmitted)
