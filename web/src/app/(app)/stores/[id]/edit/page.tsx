@@ -1,121 +1,160 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { stores } from '@/lib/api'
-import type { Store } from '@/types'
+import { useRouter, useParams } from 'next/navigation'
+import { stores, ls } from '@/lib/api'
 import { Button, Card, CardBody, CardHeader, Spinner } from '@/components/ui'
 
+type LSStore = { code: string; name: string }
+
 export default function StoreEditPage() {
-  const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const { id } = useParams<{ id: string }>()
+  const [lsStores, setLsStores]   = useState<LSStore[]>([])
+  const [lsLoading, setLsLoading] = useState(true)
+  const [pageLoading, setPageLoading] = useState(true)
   const [form, setForm] = useState({
-    store_name: '',
-    store_code: '',
+    store_name:    '',
+    store_code:    '',
     ls_store_code: '',
-    active: true,
   })
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState('')
 
   useEffect(() => {
-    stores.get(id).then((s: Store) => {
-      setForm({
-        store_name: s.store_name,
-        store_code: s.store_code,
-        ls_store_code: s.ls_store_code,
-        active: s.active,
-      })
-    }).catch(() => setError('Failed to load store'))
-      .finally(() => setLoading(false))
+    // Load current store data
+    stores.get(id)
+      .then(s => setForm({
+        store_name:    s.store_name,
+        store_code:    s.store_code,
+        ls_store_code: s.ls_store_code ?? '',
+      }))
+      .finally(() => setPageLoading(false))
+
+    // Load LS stores for the picker
+    ls.stores()
+      .then((data: LSStore[]) => setLsStores(data))
+      .catch(() => setLsStores([]))
+      .finally(() => setLsLoading(false))
   }, [id])
+
+  function handleLSStoreSelect(code: string) {
+    const picked = lsStores.find(s => s.code === code)
+    if (!picked) {
+      setForm(f => ({ ...f, ls_store_code: code }))
+      return
+    }
+    setForm({
+      ls_store_code: picked.code,
+      store_name:    picked.name,
+      store_code:    picked.code.replace(/\s+/g, '').toUpperCase(),
+    })
+  }
+
+  function set(field: string, value: string) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
+    setLoading(true)
     setError('')
     try {
       await stores.update(id, form)
-      router.push(`/stores/${id}`)
+      router.push('/stores')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save')
+      setError(err instanceof Error ? err.message : 'Failed to update store')
     } finally {
-      setSaving(false)
+      setLoading(false)
     }
   }
 
-  if (loading) return <div className="flex justify-center items-center h-64"><Spinner size="lg" /></div>
+  if (pageLoading) return <div className="flex justify-center items-center h-64"><Spinner size="lg" /></div>
 
   return (
-    <div className="p-6 max-w-lg space-y-6">
-      <div>
-        <p className="text-xs text-gray-400 mb-1">
-          <Link href="/stores" className="hover:text-teal-600">Stores</Link>
-          {' / '}
-          <Link href={`/stores/${id}`} className="hover:text-teal-600">{form.store_name || id}</Link>
-          {' / Edit'}
-        </p>
+    <div className="p-6 max-w-lg">
+      <div className="mb-6">
         <h1 className="text-xl font-semibold text-gray-900">Edit store</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Update store details</p>
       </div>
 
       <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-gray-700">Store details</h2>
-        </CardHeader>
+        <CardHeader><h2 className="text-sm font-semibold text-gray-700">Store details</h2></CardHeader>
         <CardBody>
           <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* LS Store picker */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Store name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                LS store
+                <span className="ml-1 font-normal text-gray-400">(select to auto-fill)</span>
+              </label>
+              {lsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+                  <Spinner size="sm" /> Loading stores from LS…
+                </div>
+              ) : lsStores.length > 0 ? (
+                <select
+                  value={form.ls_store_code}
+                  onChange={e => handleLSStoreSelect(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  <option value="">Select from LS…</option>
+                  {lsStores.map(s => (
+                    <option key={s.code} value={s.code}>
+                      {s.name} ({s.code})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-amber-600 py-1">
+                  Could not load stores from LS. Enter the LS store code manually below.
+                </p>
+              )}
+            </div>
+
+            {/* Store name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store name</label>
               <input
+                type="text"
                 value={form.store_name}
-                onChange={e => setForm(f => ({ ...f, store_name: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                onChange={e => set('store_name', e.target.value)}
                 required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
             </div>
 
+            {/* Store code */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Store code</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store code</label>
               <input
+                type="text"
                 value={form.store_code}
-                onChange={e => setForm(f => ({ ...f, store_code: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                onChange={e => set('store_code', e.target.value)}
                 required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
               <p className="text-xs text-gray-400 mt-1">Internal short code used in reports</p>
             </div>
 
+            {/* LS store code */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">LS store code</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">LS store code</label>
               <input
+                type="text"
                 value={form.ls_store_code}
-                onChange={e => setForm(f => ({ ...f, ls_store_code: e.target.value }))}
+                onChange={e => set('ls_store_code', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                required
               />
               <p className="text-xs text-gray-400 mt-1">Must match the store code in LS Commerce Service</p>
-            </div>
-
-            <div className="flex items-center gap-3 pt-1">
-              <input
-                type="checkbox"
-                id="active"
-                checked={form.active}
-                onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
-                className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
-              />
-              <label htmlFor="active" className="text-sm text-gray-700">Store is active</label>
             </div>
 
             {error && <p className="text-sm text-red-600">{error}</p>}
 
             <div className="flex gap-3 pt-2">
-              <Button type="submit" loading={saving}>Save changes</Button>
-              <Button type="button" variant="secondary" onClick={() => router.push(`/stores/${id}`)}>
-                Cancel
-              </Button>
+              <Button type="submit" loading={loading}>Save changes</Button>
+              <Button type="button" variant="secondary" onClick={() => router.back()}>Cancel</Button>
             </div>
           </form>
         </CardBody>

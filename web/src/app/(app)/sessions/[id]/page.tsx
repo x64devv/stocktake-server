@@ -14,10 +14,10 @@ type Worksheet = {
 }
 
 const STATUS_ACTIONS: Record<string, { label: string; next: string; variant: 'primary' | 'danger' | 'secondary' }[]> = {
-  DRAFT:             [{ label: 'Activate session',       next: 'ACTIVE',            variant: 'primary'   }],
-  ACTIVE:            [{ label: 'Mark counting complete', next: 'COUNTING_COMPLETE', variant: 'secondary' }],
-  COUNTING_COMPLETE: [{ label: 'Pull theoretical stock', next: 'pull_theoretical',  variant: 'primary'   }],
-  PENDING_REVIEW:    [{ label: 'Submit to LS / BC',      next: 'submit',            variant: 'primary'   }],
+  DRAFT:             [{ label: 'Activate session',                    next: 'ACTIVE',                  variant: 'primary'   }],
+  ACTIVE:            [{ label: 'Complete counting & pull theoreticals', next: 'complete_and_pull',      variant: 'primary'   }],
+  COUNTING_COMPLETE: [{ label: 'Pull theoretical stock',               next: 'pull_theoretical',        variant: 'primary'   }],
+  PENDING_REVIEW:    [{ label: 'Submit to LS / BC',                    next: 'submit',                  variant: 'primary'   }],
   SUBMITTED: [],
   CLOSED:    [],
 }
@@ -75,29 +75,35 @@ export default function SessionOverviewPage() {
 
   const worksheetDirty = selectedWorksheetSeqNo !== (session?.worksheet_no ? parseInt(session.worksheet_no, 10) : 0)
 
-  async function handleAction(action: string) {
-    setActionLoading(true)
-    setError('')
-    setSuccess('')
-    try {
-      if (action === 'pull_theoretical') {
-        await sessionsApi.pullTheoretical(id)
-        await sessionsApi.updateStatus(id, 'PENDING_REVIEW')
-        setSuccess('Theoretical stock pulled. Session is now in Pending Review.')
-      } else if (action === 'submit') {
-        await sessionsApi.submit(id)
-        setSuccess('Session submitted to LS / BC successfully.')
-      } else {
-        await sessionsApi.updateStatus(id, action)
-        setSuccess('Session status updated.')
-      }
-      setSession(await sessionsApi.get(id))
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Action failed')
-    } finally {
-      setActionLoading(false)
+async function handleAction(action: string) {
+  setActionLoading(true)
+  setError('')
+  setSuccess('')
+  try {
+    if (action === 'complete_and_pull') {
+      // Mark counting complete then pull theoreticals in one UX step
+      await sessionsApi.updateStatus(id, 'COUNTING_COMPLETE')
+      await sessionsApi.pullTheoretical(id)
+      await sessionsApi.updateStatus(id, 'PENDING_REVIEW')
+      setSuccess('Counting marked complete, theoreticals pulled. Session is now in Pending Review.')
+    } else if (action === 'pull_theoretical') {
+      await sessionsApi.pullTheoretical(id)
+      await sessionsApi.updateStatus(id, 'PENDING_REVIEW')
+      setSuccess('Theoretical stock pulled. Session is now in Pending Review.')
+    } else if (action === 'submit') {
+      await sessionsApi.submit(id)
+      setSuccess('Session submitted to LS / BC successfully.')
+    } else {
+      await sessionsApi.updateStatus(id, action)
+      setSuccess('Session status updated.')
     }
+    setSession(await sessionsApi.get(id))
+  } catch (err: unknown) {
+    setError(err instanceof Error ? err.message : 'Action failed')
+  } finally {
+    setActionLoading(false)
   }
+}
 
   async function handleWorksheetSave() {
     setWsLoading(true)

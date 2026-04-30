@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { variance as varianceApi } from '@/lib/api'
+import { exportToExcel } from '@/lib/exportExcel'
 import type { ConsolidatedLine, VarianceFlag } from '@/types'
 import { Button, Card, CardBody, Badge, Spinner, Empty } from '@/components/ui'
 import { clsx } from 'clsx'
@@ -88,6 +89,23 @@ export default function VariancePage() {
     } finally { setDeciding(false) }
   }
 
+  function handleExport() {
+    const rows = filtered.map(l => ({
+      'Item No.': l.item_no,
+      'Description': l.description,
+      'Counted Qty': l.counted_qty,
+      'Theoretical Qty': l.theoretical_qty,
+      'Variance': l.variance,
+      'Variance %': l.variance_pct,
+      'Status': resolvedFlagByItem[l.item_no]
+        ? `Recount ${resolvedFlagByItem[l.item_no].status.toLowerCase()}`
+        : pendingFlagByItem[l.item_no]
+        ? 'Pending recount'
+        : 'Flagged',
+    }))
+    exportToExcel(rows, 'Variance Report', `variance-report-session-${id}`)
+  }
+
   function flagCell(itemNo: string) {
     const pending = pendingFlagByItem[itemNo]
     if (pending) {
@@ -140,7 +158,7 @@ export default function VariancePage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Variance Report</h1>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -148,9 +166,12 @@ export default function VariancePage() {
             {pendingCount > 0 && <span className="ml-2 text-yellow-600 font-medium">· {pendingCount} pending review</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <input type="search" placeholder="Search item…" value={filter} onChange={e => setFilter(e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-48 focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          {filtered.length > 0 && (
+            <Button variant="secondary" onClick={handleExport}>Export Excel</Button>
+          )}
           {selected.size > 0 && (
             <Button variant="danger" onClick={flagSelected} loading={submitting}>
               Flag {selected.size} for recount
@@ -199,10 +220,10 @@ export default function VariancePage() {
                       <td className="px-4 py-3 font-medium text-red-600">
                         {line.variance > 0 ? '+' : ''}{line.variance}
                       </td>
-                      <td className="px-4 py-3 font-medium text-red-600 text-xs">
-                        {line.variance_pct > 0 ? '+' : ''}{line.variance_pct}%
+                      <td className={clsx('px-4 py-3 font-medium', Math.abs(line.variance_pct) > 10 ? 'text-red-600' : 'text-yellow-600')}>
+                        {line.variance_pct > 0 ? '+' : ''}{line.variance_pct?.toFixed(1)}%
                       </td>
-                      <td className="px-4 py-3 min-w-[220px]">{flagCell(line.item_no)}</td>
+                      <td className="px-4 py-3">{flagCell(line.item_no)}</td>
                     </tr>
                   )
                 })}

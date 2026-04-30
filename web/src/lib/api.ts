@@ -128,7 +128,7 @@ export const ls = {
       store_no: string
       no_of_lines: number
     }>>('/ls/worksheets'),
- 
+
   stores: () =>
     request<Array<{ code: string; name: string }>>('/ls/stores'),
 }
