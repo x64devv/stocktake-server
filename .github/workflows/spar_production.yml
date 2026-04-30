@@ -22,26 +22,26 @@ jobs:
       - name: Install OpenVPN
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y openvpn openvpn-systemd-resolved
+          sudo apt-get install -y openvpn
 
       # ── 3. Connect VPN ───────────────────────────────────────────────────────
       - name: Connect OpenVPN
         run: |
           mkdir -p .github/vpn
 
-          # Write raw config directly — no base64 encoding
-          echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
+          # Write raw config — no base64
+          cat > .github/vpn/spar.ovpn << 'OVPNEOF'
+          ${{ secrets.OVPN_CONFIG }}
+          OVPNEOF
 
-          # Strip options that OpenVPN 2.6+ doesn't accept
+          # Strip lines that break OpenVPN 2.6 on Ubuntu runner
           sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
           sed -i '/^;/d' .github/vpn/spar.ovpn
 
-          # Write credentials (config has 'auth-user-pass' with no file — add the file)
-          echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
+          # Write creds and point auth-user-pass at it
+          echo "${{ secrets.VPN_USERNAME }}" >  .github/vpn/creds.txt
           echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
           chmod 600 .github/vpn/creds.txt
-
-          # Point auth-user-pass at the creds file
           sed -i 's|^auth-user-pass$|auth-user-pass .github/vpn/creds.txt|' .github/vpn/spar.ovpn
 
           sudo openvpn \
@@ -50,14 +50,14 @@ jobs:
             --log vpn.log \
             --writepid vpn.pid
 
-          echo "Waiting for VPN..."
+          echo "Waiting for VPN tunnel..."
           for i in $(seq 1 30); do
             if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
-              echo "VPN connected — host reachable (attempt $i)"
+              echo "VPN connected (attempt $i)"
               break
             fi
             if [ $i -eq 30 ]; then
-              echo "VPN failed to connect"
+              echo "=== VPN FAILED ==="
               cat vpn.log
               exit 1
             fi
