@@ -134,14 +134,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c \"for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format='{{.State.Health.Status}}' stocktake-api 2>/dev/null || echo unknown); echo Attempt \$i: \$STATUS; if [ \\\"\$STATUS\\\" = \\\"healthy\\\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1\""
+              "wsl -d Ubuntu -- bash -c 'for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format=.State.Health.Status stocktake-api 2>/dev/null || echo unknown); echo Attempt \$i: \$STATUS; if [ \"\$STATUS\" = healthy ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1'"
 
       # ── 9. Verify API responding ─────────────────────────────────────────────
       - name: Verify API is responding
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c \"curl -sf http://localhost:8080/health && echo OK\""
+              "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
 
       # ── 10. Cleanup ──────────────────────────────────────────────────────────
       - name: Cleanup
