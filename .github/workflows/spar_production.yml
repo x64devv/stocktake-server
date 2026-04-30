@@ -25,39 +25,39 @@ jobs:
           sudo apt-get install -y openvpn openvpn-systemd-resolved
 
       # ── 3. Connect VPN ───────────────────────────────────────────────────────
-- name: Connect OpenVPN
-  run: |
-    mkdir -p .github/vpn                    
+      - name: Connect OpenVPN
+        run: |
+          mkdir -p .github/vpn                          # ← THIS LINE IS THE FIX
 
-    echo "${{ secrets.OVPN_CONFIG }}" | base64 -d > .github/vpn/spar.ovpn
+          echo "${{ secrets.OVPN_CONFIG }}" | base64 -d > .github/vpn/spar.ovpn
 
-    # Strip options that OpenVPN 2.6+ doesn't accept
-    sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
-    sed -i 's/^tls-auth/tls-crypt/g' .github/vpn/spar.ovpn
+          # Strip options that OpenVPN 2.6+ doesn't accept
+          sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
+          sed -i 's/^tls-auth/tls-crypt/g' .github/vpn/spar.ovpn
 
-    echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
-    echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
+          echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
+          echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
 
-    sudo openvpn \
-      --config .github/vpn/spar.ovpn \
-      --auth-user-pass .github/vpn/creds.txt \
-      --daemon \
-      --log vpn.log \
-      --writepid vpn.pid
+          sudo openvpn \
+            --config .github/vpn/spar.ovpn \
+            --auth-user-pass .github/vpn/creds.txt \
+            --daemon \
+            --log vpn.log \
+            --writepid vpn.pid
 
-    echo "Waiting for VPN..."
-    for i in $(seq 1 30); do
-      if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
-        echo "VPN connected — host reachable (attempt $i)"
-        break
-      fi
-      if [ $i -eq 30 ]; then
-        echo "VPN failed to connect"
-        cat vpn.log
-        exit 1
-      fi
-      sleep 2
-    done
+          echo "Waiting for VPN..."
+          for i in $(seq 1 30); do
+            if ping -c 1 -W 2 ${{ vars.SSH_HOST }} > /dev/null 2>&1; then
+              echo "VPN connected — host reachable (attempt $i)"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "VPN failed to connect"
+              cat vpn.log
+              exit 1
+            fi
+            sleep 2
+          done
 
       # ── 4. Configure SSH ─────────────────────────────────────────────────────
       - name: Configure SSH
