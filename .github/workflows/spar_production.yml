@@ -27,7 +27,7 @@ jobs:
       # ── 3. Connect VPN ───────────────────────────────────────────────────────
 - name: Connect OpenVPN
   run: |
-    mkdir -p .github/vpn                          # ← THIS LINE IS THE FIX
+    mkdir -p .github/vpn                    
 
     echo "${{ secrets.OVPN_CONFIG }}" | base64 -d > .github/vpn/spar.ovpn
 
