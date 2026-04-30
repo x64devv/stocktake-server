@@ -21,66 +21,45 @@ jobs:
       # ── 2. Install OpenVPN ───────────────────────────────────────────────────
       - name: Install OpenVPN
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y openvpn openvpn-systemd-resolved
+          sudo apt-get update
+          sudo apt-get --assume-yes --no-install-recommends install openvpn
 
-      # ── 3. Connect VPN ───────────────────────────────────────────────────────
-      - name: Connect OpenVPN
-        timeout-minutes: 2
+      # ── 3. Setup VPN config ──────────────────────────────────────────────────
+      - name: Setup VPN config
         run: |
           mkdir -p .github/vpn
-
-          echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
+          echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/config.ovpn
           echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
           echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
-          chmod 600 .github/vpn/creds.txt .github/vpn/spar.ovpn
+          chmod 600 .github/vpn/config.ovpn .github/vpn/creds.txt
+          grep -q "auth-user-pass" .github/vpn/config.ovpn || \
+            echo "auth-user-pass .github/vpn/creds.txt" >> .github/vpn/config.ovpn
+          sed -i '/^verify-x509-name/d' .github/vpn/config.ovpn
+          sed -i '/^ns-cert-type/d'     .github/vpn/config.ovpn
+          sed -i '/^keysize/d'          .github/vpn/config.ovpn
 
-          grep -q "auth-user-pass" .github/vpn/spar.ovpn || \
-            echo "auth-user-pass .github/vpn/creds.txt" >> .github/vpn/spar.ovpn
-
-          # Strip options unsupported in OpenVPN 2.6
-          sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
-          sed -i '/^tls-auth /d' .github/vpn/spar.ovpn
-          sed -i '/^ns-cert-type/d' .github/vpn/spar.ovpn
-          sed -i '/^keysize/d' .github/vpn/spar.ovpn
-
-          echo "=== Cleaned config ==="
-          cat .github/vpn/spar.ovpn
-
-          echo "=== Starting OpenVPN ==="
+      # ── 4. Connect VPN ───────────────────────────────────────────────────────
+      - name: Connect VPN
+        run: |
           sudo openvpn \
-            --config .github/vpn/spar.ovpn \
-            --daemon \
-            --log /tmp/openvpn.log \
-            --writepid /tmp/openvpn.pid
+            --config .github/vpn/config.ovpn \
+            --log vpn.log \
+            --daemon
 
-          # Wait for any tun/tap interface (not just tun0)
-          echo "=== Waiting for VPN interface ==="
-          for i in $(seq 1 30); do
-            sleep 2
-            echo "--- attempt $i ---"
-            ip addr show | grep -E "tun|tap" && echo "VPN interface up!" && break
-            cat /tmp/openvpn.log | tail -5
-          done
+      # ── 5. Wait for VPN ──────────────────────────────────────────────────────
+      - name: Wait for VPN connection
+        timeout-minutes: 1
+        run: until ping -c1 ${{ vars.SSH_HOST }}; do sleep 2; echo "Waiting..."; done
 
-          echo "=== Final network state ==="
-          ip addr show
-          echo "=== Full OpenVPN log ==="
-          cat /tmp/openvpn.log
-
-          # Check we have a tun/tap interface
-          ip addr show | grep -qE "tun|tap" || exit 1
-
-      # ── 4. Configure SSH ─────────────────────────────────────────────────────
+      # ── 6. Configure SSH ─────────────────────────────────────────────────────
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          ssh-keyscan -p ${{ vars.SSH_PORT }} -H ${{ vars.SSH_HOST }} >> ~/.ssh/known_hosts
 
-      # ── 5. Write .env to WSL ─────────────────────────────────────────────────
+      # ── 7. Write .env to WSL ─────────────────────────────────────────────────
       - name: Write .env to WSL
         run: |
           cat > deployment.env << 'ENVEOF'
@@ -114,7 +93,7 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app && cp /mnt/c/stocktake-staging/.env /home/stocktake/app/.env'"
 
-      # ── 6. Sync code ─────────────────────────────────────────────────────────
+      # ── 8. Sync code ─────────────────────────────────────────────────────────
       - name: Sync code to server
         run: |
           rsync -az --delete \
@@ -130,33 +109,48 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'rsync -a --delete --exclude=.env /mnt/c/stocktake-staging/ /home/stocktake/app/'"
 
-      # ── 7. Build and restart containers ──────────────────────────────────────
+      # ── 9. Deploy containers ──────────────────────────────────────────────────
       - name: Deploy containers
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done'"
 
-      # ── 8. Wait for API healthy ───────────────────────────────────────────────
+      # ── 10. Wait for API healthy ──────────────────────────────────────────────
       - name: Wait for API health
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" stocktake-api 2>/dev/null || echo unknown); echo \"Attempt \$i: \$STATUS\"; if [ \"\$STATUS\" = \"healthy\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1'"
 
-      # ── 9. Verify API responding ──────────────────────────────────────────────
+      # ── 11. Verify API responding ─────────────────────────────────────────────
       - name: Verify API is responding
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
 
-      # ── 10. Cleanup ───────────────────────────────────────────────────────────
+      # ── 12. Kill VPN ─────────────────────────────────────────────────────────
+      - name: Kill VPN connection
+        if: always()
+        run: |
+          sudo chmod 777 vpn.log || true
+          sudo killall openvpn || true
+
+      # ── 13. Upload VPN logs ───────────────────────────────────────────────────
+      - name: Upload VPN logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vpn-logs
+          path: vpn.log
+
+      # ── 14. Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup
         if: always()
         run: rm -f deployment.env .github/vpn/creds.txt
 
-      # ── 11. Notify on failure ─────────────────────────────────────────────────
+      # ── 15. Notify on failure ─────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
         run: echo "::error::Deployment failed — check logs above"
