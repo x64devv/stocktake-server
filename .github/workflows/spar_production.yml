@@ -102,7 +102,7 @@ jobs:
 
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'cp /mnt/c/stocktake-staging-env /home/stocktake/app/.env'"
+              "wsl -d Ubuntu -- bash -c \"cp /mnt/c/stocktake-staging-env /home/stocktake/app/.env\""
 
       # ── 6. Sync code ─────────────────────────────────────────────────────────
       - name: Sync code to server
@@ -120,7 +120,7 @@ jobs:
 
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done'"
+              "wsl -d Ubuntu -- bash -c \"cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done\""
 
       # ── 7. Build and restart containers ──────────────────────────────────────
       - name: Deploy containers
