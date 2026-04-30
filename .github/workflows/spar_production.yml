@@ -107,18 +107,22 @@ jobs:
       # ── 6. Sync code ─────────────────────────────────────────────────────────
       - name: Sync code to server
         run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            --exclude='.next' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
-            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging/
+          # Create a tarball of the code
+          tar --exclude='.git' \
+              --exclude='.github' \
+              --exclude='node_modules' \
+              --exclude='.env' \
+              --exclude='.next' \
+              -czf /tmp/stocktake.tar.gz .
 
+          # Copy tarball to Windows temp location
+          scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
+              /tmp/stocktake.tar.gz ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging.tar.gz
+
+          # Extract inside WSL
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'rsync -a --delete --exclude=.env /mnt/c/stocktake-staging/ /home/stocktake/app/'"
+              "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app && cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done'"
 
       # ── 7. Build and restart containers ──────────────────────────────────────
       - name: Deploy containers
