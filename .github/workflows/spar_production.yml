@@ -38,14 +38,12 @@ jobs:
           sed -i '/^;/d' .github/vpn/spar.ovpn
           sed -i '/^auth-user-pass/d' .github/vpn/spar.ovpn
 
-          # Run in background with & so the step does not block
           printf '%s\n%s\n' '${{ secrets.VPN_USERNAME }}' '${{ secrets.VPN_PASSWORD }}' | \
             sudo openvpn \
               --config .github/vpn/spar.ovpn \
               --auth-user-pass /dev/stdin \
               --verb 3 &
 
-          # Wait for tun0 interface to appear — means tunnel is up
           echo "Waiting for VPN tunnel..."
           for i in $(seq 1 30); do
             if ip addr show tun0 > /dev/null 2>&1; then
@@ -71,31 +69,38 @@ jobs:
 
       # ── 5. Write .env into WSL ───────────────────────────────────────────────
       - name: Write .env to WSL
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          OTP_SECRET: ${{ secrets.OTP_SECRET }}
+          SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
+          LS_BASE_URL: ${{ vars.LS_BASE_URL }}
+          LS_USERNAME: ${{ vars.LS_USERNAME }}
+          LS_PASSWORD: ${{ vars.LS_PASSWORD }}
+          LS_COMPANY_ID: ${{ vars.LS_COMPANY_ID }}
+          PUBLIC_WS_URL: ${{ vars.PUBLIC_WS_URL }}
         run: |
-          cat > deployment.env << 'ENVEOF'
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          OTP_SECRET=${{ secrets.OTP_SECRET }}
-          SMS_API_KEY=${{ secrets.SMS_API_KEY }}
+          cat > deployment.env << EOF
+          DB_PASSWORD=${DB_PASSWORD}
+          REDIS_PASSWORD=${REDIS_PASSWORD}
+          JWT_SECRET=${JWT_SECRET}
+          OTP_SECRET=${OTP_SECRET}
+          SMS_API_KEY=${SMS_API_KEY}
           SMS_BASE_URL=https://sms.localhost.co.zw/api
-          LS_BASE_URL=${{ vars.LS_BASE_URL }}
-          LS_USERNAME=${{ vars.LS_USERNAME }}
-          LS_PASSWORD=${{ vars.LS_PASSWORD }}
-          LS_COMPANY_ID=${{ vars.LS_COMPANY_ID }}
-          PUBLIC_WS_URL=${{ vars.PUBLIC_WS_URL }}
+          LS_BASE_URL=${LS_BASE_URL}
+          LS_USERNAME=${LS_USERNAME}
+          LS_PASSWORD=${LS_PASSWORD}
+          LS_COMPANY_ID=${LS_COMPANY_ID}
+          PUBLIC_WS_URL=${PUBLIC_WS_URL}
           OTP_EXPIRY_MINUTES=10
           OTP_MAX_REQUESTS=3
           COUNTER_TOKEN_HOURS=12
           ADMIN_TOKEN_HOURS=8
           VARIANCE_TOLERANCE_PCT=2.0
-          ENVEOF
+          EOF
 
           sed -i 's/^          //' deployment.env
-
-          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
-              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app'"
 
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               deployment.env ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging-env
@@ -107,22 +112,20 @@ jobs:
       # ── 6. Sync code ─────────────────────────────────────────────────────────
       - name: Sync code to server
         run: |
-          # Create a tarball of the code
-          tar --exclude='.git' \
-              --exclude='.github' \
-              --exclude='node_modules' \
-              --exclude='.env' \
-              --exclude='.next' \
-              -czf /tmp/stocktake.tar.gz .
+          tar -czf /tmp/stocktake.tar.gz \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=node_modules \
+            --exclude=.env \
+            --exclude=.next \
+            .
 
-          # Copy tarball to Windows temp location
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               /tmp/stocktake.tar.gz ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging.tar.gz
 
-          # Extract inside WSL
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app && cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done'"
+              "wsl -d Ubuntu -- bash -c 'cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done'"
 
       # ── 7. Build and restart containers ──────────────────────────────────────
       - name: Deploy containers
@@ -150,7 +153,7 @@ jobs:
         if: always()
         run: |
           sudo killall openvpn || true
-          rm -f deployment.env .github/vpn/spar.ovpn
+          rm -f deployment.env .github/vpn/spar.ovpn /tmp/stocktake.tar.gz
 
       # ── 11. Notify on failure ─────────────────────────────────────────────────
       - name: Notify on failure
