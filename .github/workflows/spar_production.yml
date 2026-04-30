@@ -76,7 +76,7 @@ jobs:
           SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
           LS_BASE_URL: ${{ vars.LS_BASE_URL }}
           LS_USERNAME: ${{ vars.LS_USERNAME }}
-          LS_PASSWORD: ${{ vars.LS_PASSWORD }}
+          LS_PASSWORD: ${{ secrets.LS_PASSWORD }}
           LS_COMPANY_ID: ${{ vars.LS_COMPANY_ID }}
           PUBLIC_WS_URL: ${{ vars.PUBLIC_WS_URL }}
         run: |
