@@ -141,7 +141,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
+              "wsl -d Ubuntu -- bash -c \"curl -sf http://localhost:8080/health && echo OK\""
 
       # ── 10. Cleanup ──────────────────────────────────────────────────────────
       - name: Cleanup
