@@ -89,22 +89,27 @@ func (c *Client) GetLSStores(ctx context.Context) ([]LSStore, error) {
 
 func (c *Client) getLSStoresDirect(ctx context.Context) ([]LSStore, error) {
 	// Try known entity names for the LSC Store page web service.
-	// OData encodes "No." as "No_x002E_" or "No" depending on BC version.
-	// Service name is whatever was set when publishing "LSC Store List" page.
 	for _, entity := range []string{"LSCStore", "LSCStoreList", "Store", "LSC_Store"} {
 		endpoint := fmt.Sprintf("%s?$format=json&$select=No,Name", c.oDataURL(entity))
+		fmt.Printf("[LS] trying store entity: %s\n", endpoint)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
+			fmt.Printf("[LS Central] request build error for %s: %v\n", entity, err)
 			continue
 		}
 		req.SetBasicAuth(c.username, c.password)
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := c.http.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			if resp != nil {
-				resp.Body.Close()
-			}
+		if err != nil {
+			fmt.Printf("[LS] network error for %s: %v\n", entity, err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			body := make([]byte, 256)
+			n, _ := resp.Body.Read(body)
+			fmt.Printf("[LS] %s returned %d: %s\n", entity, resp.StatusCode, body[:n])
+			resp.Body.Close()
 			continue
 		}
 
@@ -213,9 +218,10 @@ func (c *Client) getLSStoresFromWorksheets(ctx context.Context) ([]LSStore, erro
 
 // GetAvailableWorksheets returns all counting worksheets from LS StoreInvWrkSetup
 func (c *Client) GetAvailableWorksheets(ctx context.Context) ([]AvailableWorksheet, error) {
-	filter := url.QueryEscape("Type eq 'Counting'")
-	endpoint := fmt.Sprintf("%s?$filter=%s&$format=json",
-		c.oDataURL("StoreInvWrkSetup"), filter)
+	// Filter to Type eq 'Counting' only — other types are transfers, returns, etc.
+	// Use raw string concatenation to avoid double-encoding of the filter.
+	base := c.oDataURL("StoreInvWrkSetup")
+	endpoint := base + "?$filter=Type%20eq%20'Counting'&$format=json"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -233,7 +239,9 @@ func (c *Client) GetAvailableWorksheets(ctx context.Context) ([]AvailableWorkshe
 	if resp.StatusCode != http.StatusOK {
 		body := make([]byte, 512)
 		n, _ := resp.Body.Read(body)
-		return nil, fmt.Errorf("LS returned %d fetching worksheets: %s", resp.StatusCode, body[:n])
+		err := fmt.Errorf("LS returned %d fetching worksheets: %s", resp.StatusCode, body[:n])
+		fmt.Printf("[LS][ERROR] worksheets: url=%s status=%d body=%s\n", endpoint, resp.StatusCode, body[:n])
+		return nil, err
 	}
 
 	var result struct {

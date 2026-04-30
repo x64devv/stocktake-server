@@ -53,7 +53,7 @@ export default function PerformancePage() {
           <h1 className="text-xl font-semibold text-gray-900">Counter Performance</h1>
           <p className="text-sm text-gray-500 mt-0.5">Activity and accuracy breakdown per counter</p>
         </div>
-        {counters.length > 0 && (
+        {(counters?? []).length > 0 && (
           <Button variant="secondary" onClick={handleExport}>Export Excel</Button>
         )}
       </div>

@@ -54,7 +54,7 @@ export default function AuditPage() {
             onChange={e => setFilter(e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-56 focus:outline-none focus:ring-2 focus:ring-teal-500"
           />
-          {filtered.length > 0 && (
+          {(filtered ?? []).length > 0 && (
             <Button variant="secondary" onClick={handleExport}>Export Excel</Button>
           )}
         </div>
