@@ -122,26 +122,26 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c \"cd /home/stocktake/app && tar -xzf /mnt/c/stocktake-staging.tar.gz && echo done\""
 
-      # ── 7. Build and restart containers ──────────────────────────────────────
+# ── 7. Build and restart containers ──────────────────────────────────────
       - name: Deploy containers
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done'"
+              "wsl -d Ubuntu -- bash -c \"set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done\""
 
       # ── 8. Wait for API healthy ──────────────────────────────────────────────
       - name: Wait for API health
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" stocktake-api 2>/dev/null || echo unknown); echo \"Attempt \$i: \$STATUS\"; if [ \"\$STATUS\" = \"healthy\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1'"
+              "wsl -d Ubuntu -- bash -c \"for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format='{{.State.Health.Status}}' stocktake-api 2>/dev/null || echo unknown); echo Attempt \$i: \$STATUS; if [ \\\"\$STATUS\\\" = \\\"healthy\\\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1\""
 
       # ── 9. Verify API responding ─────────────────────────────────────────────
       - name: Verify API is responding
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
+              "wsl -d Ubuntu -- bash -c \"curl -sf http://localhost:8080/health && echo OK\""
 
       # ── 10. Cleanup ──────────────────────────────────────────────────────────
       - name: Cleanup
@@ -149,8 +149,3 @@ jobs:
         run: |
           sudo killall openvpn || true
           rm -f deployment.env .github/vpn/spar.ovpn /tmp/stocktake.tar.gz
-
-      # ── 11. Notify on failure ─────────────────────────────────────────────────
-      - name: Notify on failure
-        if: failure()
-        run: echo "::error::Deployment failed — check logs above"
