@@ -10,7 +10,7 @@ jobs:
   deploy:
     name: SSH Deploy (WSL2)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     environment: testing
 
     steps:
@@ -26,34 +26,129 @@ jobs:
 
       # ── 3. Connect VPN ───────────────────────────────────────────────────────
       - name: Connect OpenVPN
-        timeout-minutes: 2
         run: |
           mkdir -p .github/vpn
 
-          # Write raw config from secret (no base64)
           cat > .github/vpn/spar.ovpn << 'OVPNEOF'
           ${{ secrets.OVPN_CONFIG }}
           OVPNEOF
 
-          # Strip leading whitespace introduced by heredoc indentation
           sed -i 's/^          //' .github/vpn/spar.ovpn
-
-          # Remove options that break OpenVPN 2.6 on the runner
           sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
-
-          # Remove commented lines
           sed -i '/^;/d' .github/vpn/spar.ovpn
-
-          # Remove bare 'auth-user-pass' — passing creds inline below
           sed -i '/^auth-user-pass/d' .github/vpn/spar.ovpn
 
-          echo "=== Config that will be used ==="
-          cat .github/vpn/spar.ovpn
-          echo "================================="
-
-          # Run in foreground, all logs to stdout, verb 4 for full detail
+          # Run in background with & so the step does not block
           printf '%s\n%s\n' '${{ secrets.VPN_USERNAME }}' '${{ secrets.VPN_PASSWORD }}' | \
             sudo openvpn \
               --config .github/vpn/spar.ovpn \
               --auth-user-pass /dev/stdin \
-              --verb 4
+              --verb 3 &
+
+          # Wait for tun0 interface to appear — means tunnel is up
+          echo "Waiting for VPN tunnel..."
+          for i in $(seq 1 30); do
+            if ip addr show tun0 > /dev/null 2>&1; then
+              echo "VPN tunnel is up (attempt $i)"
+              ip addr show tun0
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "VPN failed to establish tunnel after 60s"
+              exit 1
+            fi
+            echo "Attempt $i — waiting..."
+            sleep 2
+          done
+
+      # ── 4. Configure SSH ─────────────────────────────────────────────────────
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ vars.SSH_PORT }} -H ${{ vars.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      # ── 5. Write .env into WSL ───────────────────────────────────────────────
+      - name: Write .env to WSL
+        run: |
+          cat > deployment.env << 'ENVEOF'
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          OTP_SECRET=${{ secrets.OTP_SECRET }}
+          SMS_API_KEY=${{ secrets.SMS_API_KEY }}
+          SMS_BASE_URL=https://sms.localhost.co.zw/api
+          LS_BASE_URL=${{ vars.LS_BASE_URL }}
+          LS_USERNAME=${{ vars.LS_USERNAME }}
+          LS_PASSWORD=${{ vars.LS_PASSWORD }}
+          LS_COMPANY_ID=${{ vars.LS_COMPANY_ID }}
+          PUBLIC_WS_URL=${{ vars.PUBLIC_WS_URL }}
+          OTP_EXPIRY_MINUTES=10
+          OTP_MAX_REQUESTS=3
+          COUNTER_TOKEN_HOURS=12
+          ADMIN_TOKEN_HOURS=8
+          VARIANCE_TOLERANCE_PCT=2.0
+          ENVEOF
+
+          sed -i 's/^          //' deployment.env
+
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app'"
+
+          scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
+              deployment.env ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging-env
+
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'cp /mnt/c/stocktake-staging-env /home/stocktake/app/.env'"
+
+      # ── 6. Sync code ─────────────────────────────────────────────────────────
+      - name: Sync code to server
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='.next' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }}" \
+            ./ ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging/
+
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'rsync -a --delete --exclude=.env /mnt/c/stocktake-staging/ /home/stocktake/app/'"
+
+      # ── 7. Build and restart containers ──────────────────────────────────────
+      - name: Deploy containers
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done'"
+
+      # ── 8. Wait for API healthy ──────────────────────────────────────────────
+      - name: Wait for API health
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" stocktake-api 2>/dev/null || echo unknown); echo \"Attempt \$i: \$STATUS\"; if [ \"\$STATUS\" = \"healthy\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1'"
+
+      # ── 9. Verify API responding ─────────────────────────────────────────────
+      - name: Verify API is responding
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
+              ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
+              "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
+
+      # ── 10. Cleanup ──────────────────────────────────────────────────────────
+      - name: Cleanup
+        if: always()
+        run: |
+          sudo killall openvpn || true
+          rm -f deployment.env .github/vpn/spar.ovpn
+
+      # ── 11. Notify on failure ─────────────────────────────────────────────────
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::Deployment failed — check logs above"
