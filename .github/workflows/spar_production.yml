@@ -39,17 +39,36 @@ jobs:
           sed -i '/^keysize/d'          .github/vpn/config.ovpn
 
       # ── 4. Connect VPN ───────────────────────────────────────────────────────
+      # Run openvpn in the background (no --daemon) so it doesn't block the step
       - name: Connect VPN
         run: |
           sudo openvpn \
             --config .github/vpn/config.ovpn \
             --log vpn.log \
-            --daemon
+            --writepid vpn.pid \
+            --connect-retry-max 5 \
+            --connect-timeout 15 &
+          echo $! > vpn_bg.pid
+          echo "OpenVPN started as background process"
 
       # ── 5. Wait for VPN ──────────────────────────────────────────────────────
       - name: Wait for VPN connection
-        timeout-minutes: 1
-        run: until ping -c1 ${{ vars.SSH_HOST }}; do sleep 2; echo "Waiting..."; done
+        timeout-minutes: 2
+        run: |
+          echo "Waiting for VPN tunnel to ${{ vars.SSH_HOST }}..."
+          for i in $(seq 1 30); do
+            sleep 3
+            echo "Attempt $i — checking connectivity..."
+            cat vpn.log 2>/dev/null | tail -3 || true
+            if ping -c1 -W2 ${{ vars.SSH_HOST }} &>/dev/null; then
+              echo "VPN connected — host reachable!"
+              exit 0
+            fi
+          done
+          echo "=== VPN log ==="
+          cat vpn.log || true
+          echo "VPN never connected"
+          exit 1
 
       # ── 6. Configure SSH ─────────────────────────────────────────────────────
       - name: Configure SSH
@@ -130,14 +149,13 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
 
-      # ── 12. Kill VPN ─────────────────────────────────────────────────────────
+      # ── 12. Kill VPN & upload logs ────────────────────────────────────────────
       - name: Kill VPN connection
         if: always()
         run: |
           sudo chmod 777 vpn.log || true
           sudo killall openvpn || true
 
-      # ── 13. Upload VPN logs ───────────────────────────────────────────────────
       - name: Upload VPN logs
         uses: actions/upload-artifact@v4
         if: always()
@@ -145,12 +163,12 @@ jobs:
           name: vpn-logs
           path: vpn.log
 
-      # ── 14. Cleanup ───────────────────────────────────────────────────────────
+      # ── 13. Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup
         if: always()
         run: rm -f deployment.env .github/vpn/creds.txt
 
-      # ── 15. Notify on failure ─────────────────────────────────────────────────
+      # ── 14. Notify on failure ─────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
         run: echo "::error::Deployment failed — check logs above"
