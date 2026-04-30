@@ -19,17 +19,29 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Connect VPN ───────────────────────────────────────────────────────
+      - name: Install OpenVPN
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openvpn openvpn-systemd-resolved
+
       - name: Connect OpenVPN
         run: |
           mkdir -p .github/vpn
           echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
-        
-      - name: Start VPN
-        uses: kota65535/github-openvpn-connect-action@v2
-        with:
-          config_file: .github/vpn/spar.ovpn
-          username: ${{ secrets.VPN_USERNAME }}
-          password: ${{ secrets.VPN_PASSWORD }}
+          # Append credentials if stored separately
+          echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
+          echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
+          chmod 600 .github/vpn/creds.txt .github/vpn/spar.ovpn
+          # Add auth-user-pass directive if not already in config
+          grep -q "auth-user-pass" .github/vpn/spar.ovpn ||             echo "auth-user-pass .github/vpn/creds.txt" >> .github/vpn/spar.ovpn
+          sudo openvpn --config .github/vpn/spar.ovpn             --daemon --log /tmp/openvpn.log             --writepid /tmp/openvpn.pid
+          # Wait for VPN to establish (tun interface up)
+          for i in $(seq 1 30); do
+            sleep 2
+            ip addr show tun0 &>/dev/null && echo "VPN up after ${i}x2s" && break
+            echo "Waiting for VPN... attempt $i"
+          done
+          ip addr show tun0 || (cat /tmp/openvpn.log && exit 1)
 
       # ── 3. Configure SSH ─────────────────────────────────────────────────────
       # Uses a stored known_hosts entry (SSH_KNOWN_HOSTS secret) instead of
