@@ -18,45 +18,62 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Connect VPN ───────────────────────────────────────────────────────
+      # ── 2. Install OpenVPN ───────────────────────────────────────────────────
       - name: Install OpenVPN
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y openvpn openvpn-systemd-resolved
 
+      # ── 3. Connect VPN ───────────────────────────────────────────────────────
       - name: Connect OpenVPN
         run: |
           mkdir -p .github/vpn
+
+          # Write config from secret
           echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
-          # Append credentials if stored separately
+
+          # Write credentials file
           echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
           echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
           chmod 600 .github/vpn/creds.txt .github/vpn/spar.ovpn
-          # Add auth-user-pass directive if not already in config
-          grep -q "auth-user-pass" .github/vpn/spar.ovpn ||             echo "auth-user-pass .github/vpn/creds.txt" >> .github/vpn/spar.ovpn
-          sudo openvpn --config .github/vpn/spar.ovpn             --daemon --log /tmp/openvpn.log             --writepid /tmp/openvpn.pid
-          # Wait for VPN to establish (tun interface up)
+
+          # Add auth-user-pass directive if not already present
+          grep -q "auth-user-pass" .github/vpn/spar.ovpn || \
+            echo "auth-user-pass .github/vpn/creds.txt" >> .github/vpn/spar.ovpn
+
+          # Strip options that are unsupported / renamed in OpenVPN 2.6
+          sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
+          sed -i '/^tls-auth /d' .github/vpn/spar.ovpn
+          sed -i '/^ns-cert-type/d' .github/vpn/spar.ovpn
+          sed -i '/^keysize/d' .github/vpn/spar.ovpn
+
+          # Start OpenVPN daemon
+          sudo openvpn \
+            --config .github/vpn/spar.ovpn \
+            --daemon \
+            --log /tmp/openvpn.log \
+            --writepid /tmp/openvpn.pid
+
+          # Wait for tun0 to come up (max 60s)
           for i in $(seq 1 30); do
             sleep 2
-            ip addr show tun0 &>/dev/null && echo "VPN up after ${i}x2s" && break
-            echo "Waiting for VPN... attempt $i"
+            ip addr show tun0 &>/dev/null && echo "VPN up after $((i*2))s" && break
+            echo "Waiting for VPN... attempt $i/30"
           done
-          ip addr show tun0 || (cat /tmp/openvpn.log && exit 1)
 
-      # ── 3. Configure SSH ─────────────────────────────────────────────────────
-      # Uses a stored known_hosts entry (SSH_KNOWN_HOSTS secret) instead of
-      # ssh-keyscan so this step works whether or not the host is reachable
-      # from the public internet.
+          # Fail with log if VPN didn't connect
+          ip addr show tun0 || { echo "=== OpenVPN log ==="; cat /tmp/openvpn.log; exit 1; }
+
+      # ── 4. Configure SSH ─────────────────────────────────────────────────────
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # Use stored host key — avoids ssh-keyscan needing direct internet access
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      # ── 4. Write .env to WSL ─────────────────────────────────────────────────
+      # ── 5. Write .env to WSL ─────────────────────────────────────────────────
       - name: Write .env to WSL
         run: |
           cat > deployment.env << 'ENVEOF'
@@ -93,7 +110,7 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'mkdir -p /home/stocktake/app && cp /mnt/c/stocktake-staging/.env /home/stocktake/app/.env'"
 
-      # ── 5. Sync code ─────────────────────────────────────────────────────────
+      # ── 6. Sync code ─────────────────────────────────────────────────────────
       - name: Sync code to server
         run: |
           rsync -az --delete \
@@ -109,33 +126,33 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'rsync -a --delete --exclude=.env /mnt/c/stocktake-staging/ /home/stocktake/app/'"
 
-      # ── 6. Build and restart containers ──────────────────────────────────────
+      # ── 7. Build and restart containers ──────────────────────────────────────
       - name: Deploy containers
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done'"
 
-      # ── 7. Wait for API healthy ───────────────────────────────────────────────
+      # ── 8. Wait for API healthy ───────────────────────────────────────────────
       - name: Wait for API health
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'for i in \$(seq 1 30); do sleep 3; STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" stocktake-api 2>/dev/null || echo unknown); echo \"Attempt \$i: \$STATUS\"; if [ \"\$STATUS\" = \"healthy\" ]; then echo API is healthy; exit 0; fi; done; echo Timed out; exit 1'"
 
-      # ── 8. Verify API responding ──────────────────────────────────────────────
+      # ── 9. Verify API responding ──────────────────────────────────────────────
       - name: Verify API is responding
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c 'curl -sf http://localhost:8080/health && echo OK'"
 
-      # ── 9. Cleanup ────────────────────────────────────────────────────────────
+      # ── 10. Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup
         if: always()
-        run: rm -f deployment.env
+        run: rm -f deployment.env .github/vpn/creds.txt
 
-      # ── 10. Notify on failure ─────────────────────────────────────────────────
+      # ── 11. Notify on failure ─────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
         run: echo "::error::Deployment failed — check logs above"
