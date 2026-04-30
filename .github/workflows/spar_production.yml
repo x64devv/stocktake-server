@@ -48,14 +48,13 @@ jobs:
           for i in $(seq 1 30); do
             if ip addr show tun0 > /dev/null 2>&1; then
               echo "VPN tunnel is up (attempt $i)"
-              ip addr show tun0
               break
             fi
             if [ $i -eq 30 ]; then
-              echo "VPN failed to establish tunnel after 60s"
+              echo "VPN failed to establish tunnel"
               exit 1
             fi
-            echo "Attempt $i — waiting..."
+            echo "Attempt $i - waiting..."
             sleep 2
           done
 
@@ -81,26 +80,22 @@ jobs:
           LS_COMPANY_ID: ${{ vars.LS_COMPANY_ID }}
           PUBLIC_WS_URL: ${{ vars.PUBLIC_WS_URL }}
         run: |
-          cat > deployment.env << EOF
-          DB_PASSWORD=${DB_PASSWORD}
-          REDIS_PASSWORD=${REDIS_PASSWORD}
-          JWT_SECRET=${JWT_SECRET}
-          OTP_SECRET=${OTP_SECRET}
-          SMS_API_KEY=${SMS_API_KEY}
-          SMS_BASE_URL=https://sms.localhost.co.zw/api
-          LS_BASE_URL=${LS_BASE_URL}
-          LS_USERNAME=${LS_USERNAME}
-          LS_PASSWORD=${LS_PASSWORD}
-          LS_COMPANY_ID=${LS_COMPANY_ID}
-          PUBLIC_WS_URL=${PUBLIC_WS_URL}
-          OTP_EXPIRY_MINUTES=10
-          OTP_MAX_REQUESTS=3
-          COUNTER_TOKEN_HOURS=12
-          ADMIN_TOKEN_HOURS=8
-          VARIANCE_TOLERANCE_PCT=2.0
-          EOF
-
-          sed -i 's/^          //' deployment.env
+          printf "DB_PASSWORD=%s\n" "$DB_PASSWORD"             > deployment.env
+          printf "REDIS_PASSWORD=%s\n" "$REDIS_PASSWORD"      >> deployment.env
+          printf "JWT_SECRET=%s\n" "$JWT_SECRET"              >> deployment.env
+          printf "OTP_SECRET=%s\n" "$OTP_SECRET"              >> deployment.env
+          printf "SMS_API_KEY=%s\n" "$SMS_API_KEY"            >> deployment.env
+          printf "SMS_BASE_URL=https://sms.localhost.co.zw/api\n" >> deployment.env
+          printf "LS_BASE_URL=%s\n" "$LS_BASE_URL"            >> deployment.env
+          printf "LS_USERNAME=%s\n" "$LS_USERNAME"            >> deployment.env
+          printf "LS_PASSWORD=%s\n" "$LS_PASSWORD"            >> deployment.env
+          printf "LS_COMPANY_ID=%s\n" "$LS_COMPANY_ID"        >> deployment.env
+          printf "PUBLIC_WS_URL=%s\n" "$PUBLIC_WS_URL"        >> deployment.env
+          printf "OTP_EXPIRY_MINUTES=10\n"                    >> deployment.env
+          printf "OTP_MAX_REQUESTS=3\n"                       >> deployment.env
+          printf "COUNTER_TOKEN_HOURS=12\n"                   >> deployment.env
+          printf "ADMIN_TOKEN_HOURS=8\n"                      >> deployment.env
+          printf "VARIANCE_TOLERANCE_PCT=2.0\n"               >> deployment.env
 
           scp -i ~/.ssh/deploy_key -P ${{ vars.SSH_PORT }} \
               deployment.env ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:C:/stocktake-staging-env
