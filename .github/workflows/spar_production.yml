@@ -27,20 +27,25 @@ jobs:
       # ── 3. Connect VPN ───────────────────────────────────────────────────────
       - name: Connect OpenVPN
         run: |
-          mkdir -p .github/vpn                          # ← THIS LINE IS THE FIX
+          mkdir -p .github/vpn
 
-          echo "${{ secrets.OVPN_CONFIG }}" | base64 -d > .github/vpn/spar.ovpn
+          # Write raw config directly — no base64 encoding
+          echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
 
           # Strip options that OpenVPN 2.6+ doesn't accept
           sed -i '/^verify-x509-name/d' .github/vpn/spar.ovpn
-          sed -i 's/^tls-auth/tls-crypt/g' .github/vpn/spar.ovpn
+          sed -i '/^;/d' .github/vpn/spar.ovpn
 
+          # Write credentials (config has 'auth-user-pass' with no file — add the file)
           echo "${{ secrets.VPN_USERNAME }}" > .github/vpn/creds.txt
           echo "${{ secrets.VPN_PASSWORD }}" >> .github/vpn/creds.txt
+          chmod 600 .github/vpn/creds.txt
+
+          # Point auth-user-pass at the creds file
+          sed -i 's|^auth-user-pass$|auth-user-pass .github/vpn/creds.txt|' .github/vpn/spar.ovpn
 
           sudo openvpn \
             --config .github/vpn/spar.ovpn \
-            --auth-user-pass .github/vpn/creds.txt \
             --daemon \
             --log vpn.log \
             --writepid vpn.pid
