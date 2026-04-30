@@ -20,6 +20,11 @@ jobs:
 
       # ── 2. Connect VPN ───────────────────────────────────────────────────────
       - name: Connect OpenVPN
+        run: |
+          mkdir -p .github/vpn
+          echo "${{ secrets.OVPN_CONFIG }}" > .github/vpn/spar.ovpn
+        
+      - name: Start VPN
         uses: kota65535/github-openvpn-connect-action@v2
         with:
           config_file: .github/vpn/spar.ovpn
