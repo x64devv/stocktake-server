@@ -1,11 +1,9 @@
-// Store & Layout
 export interface Store {
   id: string
   store_code: string
   store_name: string
   ls_store_code: string
   active: boolean
-  created_at: string
 }
 
 export interface Zone {
@@ -31,40 +29,14 @@ export interface Bay {
   active: boolean
 }
 
-export interface StoreLayout {
-  zones: Zone[]
-  aisles: Aisle[]
-  bays: Bay[]
-}
-
-// Sessions
-export type SessionType =
-  | 'FLOOR'
-  | 'BAKERY'
-  | 'BUTCHERY'
-  | 'FRUIT_VEG'
-  | 'DELI_COLD'
-  | 'DELI_HOT'
-  | 'QSR'
-  | 'RESTAURANT'
-  | 'PARTIAL'
-  | 'FULL' // legacy — kept for existing data compatibility
-export type SessionStatus =
-  | 'DRAFT'
-  | 'ACTIVE'
-  | 'COUNTING_COMPLETE'
-  | 'PENDING_REVIEW'
-  | 'SUBMITTED'
-  | 'CLOSED'
-
 export interface Session {
   id: string
   store_id: string
   session_date: string
-  type: SessionType
-  status: SessionStatus
+  type: string
+  status: string
   variance_tolerance_pct: number
-  worksheet_no?: string
+  worksheet_no: string | null
   created_by: string
   created_at: string
 }
@@ -80,6 +52,7 @@ export interface TheoreticalStock {
   session_id: string
   item_no: string
   theoretical_qty: number
+  unit_cost: number
   pulled_at: string
 }
 
@@ -115,6 +88,8 @@ export interface ConsolidatedLine {
   theoretical_qty: number
   variance: number
   variance_pct: number
+  unit_cost: number
+  variance_cost: number
   flagged: boolean
 }
 
@@ -187,4 +162,10 @@ export interface WSEvent {
   type: WSEventType
   session_id: string
   payload: Record<string, unknown>
+}
+
+export interface StoreLayout {
+  zones: Zone[]
+  aisles: Aisle[]
+  bays: Bay[]
 }

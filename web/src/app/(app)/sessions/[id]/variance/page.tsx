@@ -8,7 +8,7 @@ import type { ConsolidatedLine, VarianceFlag } from '@/types'
 import { Button, Card, CardBody, Badge, Spinner, Empty } from '@/components/ui'
 import { clsx } from 'clsx'
 
-type SortKey = 'item_no' | 'variance' | 'variance_pct'
+type SortKey = 'item_no' | 'variance' | 'variance_pct' | 'variance_cost'
 type SortDir = 'asc' | 'desc'
 type DecisionModal = { flagId: string; itemNo: string; decision: 'ACCEPTED' | 'REJECTED' } | null
 
@@ -20,7 +20,7 @@ export default function VariancePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState('')
-  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'variance_pct', dir: 'desc' })
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'variance_cost', dir: 'desc' })
   const [modal, setModal] = useState<DecisionModal>(null)
   const [notes, setNotes] = useState('')
   const [deciding, setDeciding] = useState(false)
@@ -60,7 +60,10 @@ export default function VariancePage() {
   )
 
   const filtered = lines
-    .filter(l => !filter || l.item_no.toLowerCase().includes(filter.toLowerCase()) || l.description.toLowerCase().includes(filter.toLowerCase()))
+    .filter(l => !filter ||
+      l.item_no.toLowerCase().includes(filter.toLowerCase()) ||
+      l.description.toLowerCase().includes(filter.toLowerCase())
+    )
     .sort((a, b) => {
       const aVal = a[sort.key] as number | string
       const bVal = b[sort.key] as number | string
@@ -69,24 +72,32 @@ export default function VariancePage() {
     })
 
   async function flagSelected() {
-    if (!selected.size) return
+    if (selected.size === 0) return
     setSubmitting(true)
     try {
       await varianceApi.flagItems(id, Array.from(selected))
       setSelected(new Set())
       await load()
-    } finally { setSubmitting(false) }
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  async function submitDecision() {
+  async function decide(flagId: string, itemNo: string, decision: 'ACCEPTED' | 'REJECTED') {
+    setModal({ flagId, itemNo, decision })
+    setNotes('')
+  }
+
+  async function confirmDecision() {
     if (!modal) return
     setDeciding(true)
     try {
       await varianceApi.updateFlag(id, modal.flagId, modal.decision, notes)
       setModal(null)
-      setNotes('')
       await load()
-    } finally { setDeciding(false) }
+    } finally {
+      setDeciding(false)
+    }
   }
 
   function handleExport() {
@@ -95,143 +106,212 @@ export default function VariancePage() {
       'Description': l.description,
       'Counted Qty': l.counted_qty,
       'Theoretical Qty': l.theoretical_qty,
-      'Variance': l.variance,
+      'Variance Qty': l.variance,
       'Variance %': l.variance_pct,
-      'Status': resolvedFlagByItem[l.item_no]
-        ? `Recount ${resolvedFlagByItem[l.item_no].status.toLowerCase()}`
-        : pendingFlagByItem[l.item_no]
-        ? 'Pending recount'
-        : 'Flagged',
+      'Unit Cost': l.unit_cost,
+      'Variance Cost': l.variance_cost,
+      'Flagged': l.flagged ? 'Yes' : 'No',
     }))
     exportToExcel(rows, 'Variance Report', `variance-report-session-${id}`)
   }
 
-  function flagCell(itemNo: string) {
-    const pending = pendingFlagByItem[itemNo]
-    if (pending) {
-      return (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge color="yellow">Pending recount</Badge>
-          <button onClick={() => setModal({ flagId: pending.id, itemNo, decision: 'ACCEPTED' })}
-            className="text-xs text-green-600 hover:text-green-700 font-medium px-1.5 py-0.5 rounded hover:bg-green-50">Accept</button>
-          <button onClick={() => setModal({ flagId: pending.id, itemNo, decision: 'REJECTED' })}
-            className="text-xs text-red-600 hover:text-red-700 font-medium px-1.5 py-0.5 rounded hover:bg-red-50">Reject</button>
-        </div>
-      )
-    }
-    const resolved = resolvedFlagByItem[itemNo]
-    if (resolved) return <Badge color={resolved.status === 'ACCEPTED' ? 'green' : 'gray'}>Recount {resolved.status.toLowerCase()}</Badge>
-    return null
-  }
+  // Total variance cost summary
+  const totalVarianceCost = filtered.reduce((sum, l) => sum + l.variance_cost, 0)
 
-  if (loading) return <div className="flex justify-center items-center h-64"><Spinner size="lg" /></div>
-
-  const pendingCount = flags.filter(f => f.status === 'PENDING').length
+  if (loading) return <Spinner />
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-gray-900">Variance Report</h1>
+        <div className="flex gap-2">
+          {selected.size > 0 && (
+            <Button size="sm" loading={submitting} onClick={flagSelected}>
+              Flag {selected.size} item{selected.size > 1 ? 's' : ''} for recount
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={handleExport}>Export</Button>
+        </div>
+      </div>
+
+      {/* Summary bar */}
+      <div className="grid grid-cols-3 gap-4">
+        <Card>
+          <CardBody className="py-3">
+            <p className="text-xs text-gray-500">Items over tolerance</p>
+            <p className="text-2xl font-bold text-gray-900">{filtered.length}</p>
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody className="py-3">
+            <p className="text-xs text-gray-500">Pending recount</p>
+            <p className="text-2xl font-bold text-amber-600">
+              {flags.filter(f => f.status === 'PENDING').length}
+            </p>
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody className="py-3">
+            <p className="text-xs text-gray-500">Total variance cost</p>
+            <p className={clsx('text-2xl font-bold', totalVarianceCost < 0 ? 'text-red-600' : 'text-green-600')}>
+              {totalVarianceCost.toLocaleString('en-ZW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card>
+        <CardBody>
+          <div className="mb-3">
+            <input
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder="Filter by item no. or description…"
+              className="w-full max-w-sm px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+
+          {filtered.length === 0 ? (
+            <Empty message="No items outside variance tolerance." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wide">
+                    <th className="pb-2 pr-3 w-8"></th>
+                    <th className="pb-2 pr-4">Item No.</th>
+                    <th className="pb-2 pr-4">Description</th>
+                    <th className="pb-2 pr-4 text-right">Counted</th>
+                    <th className="pb-2 pr-4 text-right">Theoretical</th>
+                    <th
+                      className="pb-2 pr-4 text-right cursor-pointer select-none"
+                      onClick={() => toggleSort('variance')}
+                    >
+                      Variance Qty <SortIcon col="variance" />
+                    </th>
+                    <th
+                      className="pb-2 pr-4 text-right cursor-pointer select-none"
+                      onClick={() => toggleSort('variance_pct')}
+                    >
+                      Variance % <SortIcon col="variance_pct" />
+                    </th>
+                    <th className="pb-2 pr-4 text-right">Unit Cost</th>
+                    <th
+                      className="pb-2 pr-4 text-right cursor-pointer select-none"
+                      onClick={() => toggleSort('variance_cost')}
+                    >
+                      Variance Cost <SortIcon col="variance_cost" />
+                    </th>
+                    <th className="pb-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(l => {
+                    const pendingFlag = pendingFlagByItem[l.item_no]
+                    const resolvedFlag = resolvedFlagByItem[l.item_no]
+                    const isSelected = selected.has(l.item_no)
+
+                    return (
+                      <tr
+                        key={l.item_no}
+                        onClick={() => toggleSelect(l.item_no)}
+                        className={clsx(
+                          'border-b border-gray-50 transition-colors',
+                          !pendingFlag && !resolvedFlag && 'cursor-pointer hover:bg-gray-50',
+                          isSelected && 'bg-teal-50',
+                        )}
+                      >
+                        <td className="py-2 pr-3">
+                          {!pendingFlag && !resolvedFlag && (
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(l.item_no)}
+                              className="accent-teal-600"
+                            />
+                          )}
+                        </td>
+                        <td className="py-2 pr-4 font-mono text-xs">{l.item_no}</td>
+                        <td className="py-2 pr-4 text-gray-700">{l.description}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{l.counted_qty.toFixed(2)}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{l.theoretical_qty.toFixed(2)}</td>
+                        <td className={clsx('py-2 pr-4 text-right tabular-nums font-medium',
+                          l.variance < 0 ? 'text-red-600' : 'text-green-600')}>
+                          {l.variance.toFixed(2)}
+                        </td>
+                        <td className={clsx('py-2 pr-4 text-right tabular-nums font-medium',
+                          l.variance_pct < 0 ? 'text-red-600' : 'text-green-600')}>
+                          {l.variance_pct.toFixed(2)}%
+                        </td>
+                        <td className="py-2 pr-4 text-right tabular-nums text-gray-500">
+                          {l.unit_cost.toFixed(2)}
+                        </td>
+                        <td className={clsx('py-2 pr-4 text-right tabular-nums font-semibold',
+                          l.variance_cost < 0 ? 'text-red-600' : 'text-green-600')}>
+                          {l.variance_cost.toLocaleString('en-ZW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2">
+                          {pendingFlag ? (
+                            <div className="flex gap-1">
+                              <button
+                                onClick={e => { e.stopPropagation(); decide(pendingFlag.id, l.item_no, 'ACCEPTED') }}
+                                className="px-2 py-0.5 text-xs rounded bg-green-100 text-green-700 hover:bg-green-200"
+                              >
+                                Accept
+                              </button>
+                              <button
+                                onClick={e => { e.stopPropagation(); decide(pendingFlag.id, l.item_no, 'REJECTED') }}
+                                className="px-2 py-0.5 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : resolvedFlag ? (
+                            <Badge color={resolvedFlag.status === 'ACCEPTED' ? 'green' : 'red'}>
+                              {resolvedFlag.status}
+                            </Badge>
+                          ) : (
+                            <Badge color="gray">Unflagged</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardBody>
+      </Card>
+
+      {/* Decision modal */}
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
-            <h2 className="text-base font-semibold text-gray-900">
-              {modal.decision === 'ACCEPTED' ? 'Accept recount result' : 'Reject recount'}
+            <h2 className="text-lg font-semibold text-gray-900">
+              {modal.decision === 'ACCEPTED' ? 'Accept' : 'Reject'} recount — {modal.itemNo}
             </h2>
-            <p className="text-sm text-gray-500">
-              Item <span className="font-mono text-gray-700">{modal.itemNo}</span> —{' '}
-              {modal.decision === 'ACCEPTED'
-                ? 'Accept this recount as the final count.'
-                : 'Reject the recount and return to counter for another round.'}
-            </p>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Notes (optional)</label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-                placeholder="Add any notes about this decision…"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none" />
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="secondary" onClick={() => { setModal(null); setNotes('') }}>Cancel</Button>
-              <Button variant={modal.decision === 'ACCEPTED' ? 'primary' : 'danger'} onClick={submitDecision} loading={deciding}>
-                {modal.decision === 'ACCEPTED' ? 'Accept' : 'Reject'}
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Notes (optional)"
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setModal(null)}>Cancel</Button>
+              <Button
+                size="sm"
+                variant={modal.decision === 'ACCEPTED' ? 'primary' : 'danger'}
+                loading={deciding}
+                onClick={confirmDecision}
+              >
+                Confirm {modal.decision === 'ACCEPTED' ? 'Accept' : 'Reject'}
               </Button>
             </div>
           </div>
         </div>
       )}
-
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Variance Report</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {filtered.length} item{filtered.length !== 1 ? 's' : ''} outside tolerance
-            {pendingCount > 0 && <span className="ml-2 text-yellow-600 font-medium">· {pendingCount} pending review</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <input type="search" placeholder="Search item…" value={filter} onChange={e => setFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-48 focus:outline-none focus:ring-2 focus:ring-teal-500" />
-          {filtered.length > 0 && (
-            <Button variant="secondary" onClick={handleExport}>Export Excel</Button>
-          )}
-          {selected.size > 0 && (
-            <Button variant="danger" onClick={flagSelected} loading={submitting}>
-              Flag {selected.size} for recount
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <Card>
-        <CardBody className="p-0">
-          {filtered.length === 0 ? (
-            <Empty message={filter ? 'No matching items.' : 'No variance items — all counts within tolerance.'} />
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="px-4 py-3 w-8" />
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer select-none"
-                    onClick={() => toggleSort('item_no')}>Item no.<SortIcon col="item_no" /></th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Description</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Counted</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Theoretical</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer select-none"
-                    onClick={() => toggleSort('variance')}>Variance<SortIcon col="variance" /></th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer select-none"
-                    onClick={() => toggleSort('variance_pct')}>Var %<SortIcon col="variance_pct" /></th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(line => {
-                  const isPending = !!pendingFlagByItem[line.item_no]
-                  const isResolved = !!resolvedFlagByItem[line.item_no]
-                  const isSelected = selected.has(line.item_no)
-                  return (
-                    <tr key={line.item_no} className={clsx('hover:bg-gray-50', isSelected && 'bg-red-50', isResolved && 'opacity-50')}>
-                      <td className="px-4 py-3">
-                        <input type="checkbox" checked={isSelected} disabled={isPending || isResolved}
-                          onChange={() => toggleSelect(line.item_no)}
-                          className="rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-600">{line.item_no}</td>
-                      <td className="px-4 py-3 text-gray-900">{line.description}</td>
-                      <td className="px-4 py-3">{line.counted_qty}</td>
-                      <td className="px-4 py-3">{line.theoretical_qty}</td>
-                      <td className="px-4 py-3 font-medium text-red-600">
-                        {line.variance > 0 ? '+' : ''}{line.variance}
-                      </td>
-                      <td className={clsx('px-4 py-3 font-medium', Math.abs(line.variance_pct) > 10 ? 'text-red-600' : 'text-yellow-600')}>
-                        {line.variance_pct > 0 ? '+' : ''}{line.variance_pct?.toFixed(1)}%
-                      </td>
-                      <td className="px-4 py-3">{flagCell(line.item_no)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </CardBody>
-      </Card>
     </div>
   )
 }

@@ -40,6 +40,8 @@ func (s *service) GetConsolidated(ctx context.Context, sessionID string) ([]Cons
 			COALESCE(SUM(cl.quantity), 0)                                              AS counted_qty,
 			COALESCE(ts.theoretical_qty, 0)                                            AS theoretical_qty,
 			COALESCE(SUM(cl.quantity), 0) - COALESCE(ts.theoretical_qty, 0)           AS variance,
+			COALESCE(si.unit_cost, 0)                                                  AS unit_cost,
+			(COALESCE(SUM(cl.quantity), 0) - COALESCE(ts.theoretical_qty, 0)) * COALESCE(si.unit_cost, 0)                                                AS variance_cost,
 			CASE WHEN COALESCE(ts.theoretical_qty,0) = 0 THEN 0
 			     ELSE ROUND(((COALESCE(SUM(cl.quantity),0) - COALESCE(ts.theoretical_qty,0))
 			          / ts.theoretical_qty * 100)::numeric, 2)

@@ -18,25 +18,26 @@ type AvailableWorksheet struct {
 	StoreNo        string `json:"store_no"`
 	NoOfLines      int    `json:"no_of_lines"`
 }
-
-// WorksheetLine represents a single line from LS StoreInvJournal
+// WorksheetLine
 type WorksheetLine struct {
-	WorksheetSeqNo int     `json:"WorksheetSeqNo"`
-	LineNo         int     `json:"Line_No"`
-	ItemNo         string  `json:"Item_No"`
-	Description    string  `json:"Description"`
-	Barcode        string  `json:"Barcode"`
-	UoM            string  `json:"Unit_of_Measure_Code"`
-	TheoreticalQty float64 `json:"Qty_Calculated"`
-	ETag           string  `json:"-"`
+    WorksheetSeqNo int     `json:"WorksheetSeqNo"`
+    LineNo         int     `json:"Line_No"`
+    ItemNo         string  `json:"Item_No"`
+    Description    string  `json:"Description"`
+    Barcode        string  `json:"Barcode"`
+    UoM            string  `json:"Unit_of_Measure_Code"`
+    TheoreticalQty float64 `json:"Qty_Calculated"`
+    UnitCost       float64 `json:"Unit_Cost"`
+    ETag           string  `json:"-"`
 }
 
-// ItemLine is used when pulling the item master from LS
+// ItemLine
 type ItemLine struct {
-	ItemNo      string `json:"No"`
-	Description string `json:"Description"`
-	Barcode     string `json:"Barcode"`
-	UoM         string `json:"BaseUnitOfMeasure"`
+    ItemNo      string  `json:"No"`
+    Description string  `json:"Description"`
+    Barcode     string  `json:"Barcode"`
+    UoM         string  `json:"BaseUnitOfMeasure"`
+    UnitCost    float64 `json:"Unit_Cost"`
 }
 
 // LSStore represents a store record from LS
@@ -314,6 +315,7 @@ func (c *Client) GetWorksheetLines(ctx context.Context, worksheetSeqNo int) ([]W
 			Barcode:        jsonStr(m, "Barcode"),
 			UoM:            jsonStr(m, "Unit_of_Measure_Code"),
 			TheoreticalQty: jsonFloat(m, "Qty_Calculated"),
+			UnitCost: jsonFloat(m, "Unit_Cost"),
 			ETag:           jsonStr(m, "@odata.etag"),
 		}
 		out = append(out, line)
@@ -382,8 +384,8 @@ func (c *Client) PostFinalCounts(ctx context.Context, worksheetSeqNo int, lines 
 
 // GetItems fetches the item master from LS
 func (c *Client) GetItems(ctx context.Context) ([]ItemLine, error) {
-	endpoint := fmt.Sprintf("%s?$format=json&$select=No,Description,Barcode,BaseUnitOfMeasure",
-		c.oDataURL("Item"))
+	endpoint := fmt.Sprintf("%s?$format=json&$select=No,Description,Barcode,BaseUnitOfMeasure,Unit_Cost",
+    c.oDataURL("Item"))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

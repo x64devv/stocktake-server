@@ -62,13 +62,6 @@ type Session struct {
 	CreatedAt            time.Time     `json:"created_at"`
 }
 
-type SessionItem struct {
-	SessionID   string `json:"session_id"  gorm:"type:uuid;primaryKey"`
-	ItemNo      string `json:"item_no"     gorm:"primaryKey"`
-	Description string `json:"description"`
-	Barcode     string `json:"barcode"`
-	UoM         string `json:"uo_m"`
-}
 
 type SessionCounter struct {
 	SessionID  string    `json:"session_id"  gorm:"type:uuid;primaryKey"`
@@ -77,8 +70,20 @@ type SessionCounter struct {
 	Active     bool      `json:"active"      gorm:"default:true"`
 }
 
+
+
+type SessionItem struct {
+    SessionID   string  `json:"session_id"  gorm:"type:uuid;primaryKey"`
+    ItemNo      string  `json:"item_no"     gorm:"primaryKey"`
+    Description string  `json:"description"`
+    Barcode     string  `json:"barcode"`
+    UoM         string  `json:"uo_m"`
+    UnitCost    float64 `json:"unit_cost"   gorm:"type:numeric(14,4);default:0"`
+}
+
 type TheoreticalStock struct {
-	SessionID      string  `json:"session_id"      gorm:"type:uuid;primaryKey"`
-	ItemNo         string  `json:"item_no"         gorm:"primaryKey"`
-	TheoreticalQty float64 `json:"theoretical_qty" gorm:"type:numeric(14,4)"`
+    SessionID      string  `json:"session_id"      gorm:"type:uuid;primaryKey"`
+    ItemNo         string  `json:"item_no"         gorm:"primaryKey"`
+    TheoreticalQty float64 `json:"theoretical_qty" gorm:"type:numeric(14,4)"`
+    UnitCost       float64 `json:"unit_cost"       gorm:"type:numeric(14,4);default:0"`
 }

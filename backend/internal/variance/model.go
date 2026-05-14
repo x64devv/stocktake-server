@@ -35,6 +35,8 @@ type ConsolidatedLine struct {
 	TheoreticalQty float64 `json:"theoretical_qty"`
 	Variance       float64 `json:"variance"`
 	VariancePct    float64 `json:"variance_pct"`
+	UnitCost      float64 `json:"unit_cost"`
+	VarianceCost  float64 `json:"variance_cost"`
 	Flagged        bool    `json:"flagged"`
 }
 
