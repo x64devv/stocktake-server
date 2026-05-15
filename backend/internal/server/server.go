@@ -76,6 +76,7 @@ func New(cfg *config.Config, db *gorm.DB) *Server {
 	// Counter-authenticated routes
 	counterRoutes := api.Group("", middleware.RequireAuth(authSvc, auth.TokenCounter))
 	countingHandler.RegisterRoutes(counterRoutes)
+	sessionHandler.RegisterCounterRoutes(counterRoutes)
 
 	// WebSocket (admin only)
 	router.GET("/ws/sessions/:id", middleware.RequireAuth(authSvc, auth.TokenAdmin), hub.ServeWS)

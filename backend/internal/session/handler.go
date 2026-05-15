@@ -19,6 +19,7 @@ func NewHandler(svc Service, authSvc *auth.Service, smsSvc sms.Service, counterH
 	return &Handler{svc: svc, authSvc: authSvc, smsSvc: smsSvc, counterTokenHours: counterHours}
 }
 
+// RegisterRoutes registers admin-only session routes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/sessions", h.ListSessions)
 	rg.POST("/sessions", h.CreateSession)
@@ -36,9 +37,14 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/ls/worksheets", h.GetAvailableWorksheets)
 	rg.GET("/ls/stores", h.GetLSStores)
 	rg.PUT("/sessions/:id", h.UpdateSession)
+}
 
-	rg.GET("/counter/sessions", h.GetCounterSessions)
-
+// RegisterCounterRoutes registers session routes accessible with a counter (mobile) token.
+func (h *Handler) RegisterCounterRoutes(rg *gin.RouterGroup) {
+	rg.GET("/counter/sessions", h.GetCounterSessionViews)
+	rg.GET("/counter/sessions/:id", h.GetCounterSessionView)
+	rg.GET("/counter/sessions/:id/bays", h.GetSessionBays)
+	rg.GET("/counter/sessions/:id/items/:barcode", h.GetSessionItemByBarcode)
 }
 
 
@@ -221,4 +227,47 @@ func (h *Handler) GetCounterSessions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sessions)
+}
+
+// GetCounterSessionViews returns rich session summaries for the mobile counter app.
+func (h *Handler) GetCounterSessionViews(c *gin.Context) {
+	counterID := c.GetString("user_id")
+	views, err := h.svc.GetCounterSessionViews(c.Request.Context(), counterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, views)
+}
+
+// GetCounterSessionView returns a single rich session view for the mobile counter app.
+func (h *Handler) GetCounterSessionView(c *gin.Context) {
+	counterID := c.GetString("user_id")
+	view, err := h.svc.GetCounterSessionView(c.Request.Context(), c.Param("id"), counterID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	c.JSON(http.StatusOK, view)
+}
+
+// GetSessionBays returns all bays for a session's store, with submission status.
+func (h *Handler) GetSessionBays(c *gin.Context) {
+	counterID := c.GetString("user_id")
+	bays, err := h.svc.GetSessionBays(c.Request.Context(), c.Param("id"), counterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, bays)
+}
+
+// GetSessionItemByBarcode looks up a session item by barcode for the mobile counter app.
+func (h *Handler) GetSessionItemByBarcode(c *gin.Context) {
+	item, err := h.svc.GetSessionItemByBarcode(c.Request.Context(), c.Param("id"), c.Param("barcode"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "item not found in session"})
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
