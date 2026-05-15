@@ -90,14 +90,22 @@ services:
       NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://localhost}
     networks:
       - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://0.0.0.0:3000/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   stocktake-proxy:
     image: nginx:alpine
     container_name: stocktake-proxy
     restart: unless-stopped
     depends_on:
-      - stocktake-api
-      - stocktake-web
+      stocktake-api:
+        condition: service_healthy
+      stocktake-web:
+        condition: service_healthy
     ports:
       - "8084:80"
       - "8443:443"

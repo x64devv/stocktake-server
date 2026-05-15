@@ -129,19 +129,19 @@ jobs:
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
               "wsl -d Ubuntu -- bash -c \"set -e && cd /home/stocktake/app && docker compose pull --ignore-pull-failures && docker compose up --build -d --remove-orphans && docker image prune -f && echo done\""
 
-      # ── 8. Wait for API healthy ──────────────────────────────────────────────
-      - name: Wait for API health
+      # ── 8. Wait for all services healthy ────────────────────────────────────
+      - name: Wait for services to be healthy
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c \"for i in \$(seq 1 30); do sleep 3; if docker exec stocktake-api wget -qO /dev/null http://localhost:8080/health; then echo API is healthy; exit 0; fi; echo Attempt \$i: not ready yet; done; echo Timed out waiting for API; exit 1\""
+              "wsl -d Ubuntu -- bash -c \"cd /home/stocktake/app && for i in \$(seq 1 40); do sleep 5; STATUS=\$(docker compose ps --format json 2>/dev/null | grep -c '\\\"Health\\\":\\\"healthy\\\"' || true); TOTAL=\$(docker compose ps --format json 2>/dev/null | grep -c '\\\"Health\\\"' || true); echo Attempt \$i: \$STATUS/\$TOTAL services healthy; if docker exec stocktake-api wget -qO /dev/null http://localhost:8080/health 2>/dev/null && docker exec stocktake-web wget -qO /dev/null http://localhost:3000/ 2>/dev/null; then echo All core services healthy; exit 0; fi; done; echo Timed out; docker compose logs --tail=20; exit 1\""
 
-      # ── 9. Verify API responding ─────────────────────────────────────────────
-      - name: Verify API is responding
+      # ── 9. Verify stack responding through nginx ─────────────────────────────
+      - name: Verify stack is responding
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c \"curl -sf http://localhost:8084/health && echo OK\""
+              "wsl -d Ubuntu -- bash -c \"curl -sf http://localhost:8084/health && echo API-OK && curl -sf -o /dev/null -w '%{http_code}' http://localhost:8084/ | grep -qE '^(200|304)' && echo WEB-OK\""
 
       # ── 10. Cleanup ──────────────────────────────────────────────────────────
       - name: Cleanup
