@@ -134,7 +134,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ vars.SSH_PORT }} \
               ${{ vars.SSH_USER }}@${{ vars.SSH_HOST }} \
-              "wsl -d Ubuntu -- bash -c \"for i in \$(seq 1 30); do sleep 3; if docker exec stocktake-api wget -qO- http://localhost:8080/health > /dev/null 2>&1; then echo API is healthy; exit 0; fi; echo Attempt \$i: not ready yet; done; echo Timed out waiting for API; exit 1\""
+              "wsl -d Ubuntu -- bash -c \"for i in \$(seq 1 30); do sleep 3; if docker exec stocktake-api wget -qO /dev/null http://localhost:8080/health; then echo API is healthy; exit 0; fi; echo Attempt \$i: not ready yet; done; echo Timed out waiting for API; exit 1\""
 
       # ── 9. Verify API responding ─────────────────────────────────────────────
       - name: Verify API is responding
